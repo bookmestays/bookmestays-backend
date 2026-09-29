@@ -40,3 +40,8 @@ yarn-error.log*
 **/*.log
 package-lock.json
 **/*.bun
+# env
+.env
+
+# local media uploads (dev storage fallback)
+uploads/

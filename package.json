@@ -2,14 +2,37 @@
   "name": "bookmestays-backend",
   "version": "1.0.50",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "bun run --watch src/index.ts"
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "typecheck": "tsc -p .",
+    "db:push": "drizzle-kit push",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
+    "seed": "bun run src/scripts/seed.ts",
+    "seed:demo": "bun run src/scripts/seed-demo.ts"
   },
   "dependencies": {
-    "elysia": "latest"
+    "@aws-sdk/client-s3": "^3.1137.0",
+    "@aws-sdk/s3-request-presigner": "^3.1137.0",
+    "@elysiajs/cors": "^1.4.2",
+    "@elysiajs/cron": "^1.4.2",
+    "@elysiajs/jwt": "^1.4.2",
+    "@elysiajs/openapi": "^1.4.16",
+    "drizzle-orm": "^0.45.3",
+    "elysia": "latest",
+    "fast-xml-parser": "^5.11.1",
+    "jose": "^6.2.12",
+    "nodemailer": "^10.0.10",
+    "postgres": "^3.4.9",
+    "razorpay": "^2.9.8"
   },
   "devDependencies": {
-    "bun-types": "latest"
+    "@types/bun": "^1.4.2",
+    "@types/nodemailer": "^8.0.2",
+    "bun-types": "latest",
+    "drizzle-kit": "^0.31.11",
+    "typescript": "^7.0.2"
   },
-  "module": "src/index.js"
+  "module": "src/index.ts"
 }
