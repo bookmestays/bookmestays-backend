@@ -15,11 +15,13 @@ import {
   signAccessToken,
 } from "../../lib/auth";
 import { badRequest, conflict, unauthorized } from "../../lib/errors";
-import { notifyLater, sendEmail, sendSms } from "../../lib/notify";
+import { otpEmail } from "../../lib/email-templates";
+import { sendEmail } from "../../lib/notify";
 import { sha256 } from "../../lib/utils";
 
 const ACCESS_MAX_AGE = 15 * 60;
 const REFRESH_MAX_AGE = env.refreshTokenTtlDays * 86_400;
+const OTP_TTL_MINUTES = 10;
 
 const normalizePhone = (p: string) => {
   const digits = p.replace(/\D/g, "");
@@ -117,11 +119,11 @@ export const authModule = new Elysia({ prefix: "/auth", tags: ["Auth"] })
     },
   )
 
-  // OTP login/signup for guests (phone or email)
+  // OTP login/signup for guests (email only; phone is collected for bookings, never verified by SMS)
   .post(
     "/otp/request",
     async ({ body }) => {
-      const target = isEmail(body.target) ? body.target.trim().toLowerCase() : normalizePhone(body.target);
+      const target = body.target.trim().toLowerCase();
       const recent = await db.query.otpCodes.findFirst({
         where: and(eq(otpCodes.target, target), gt(otpCodes.createdAt, new Date(Date.now() - 30_000))),
       });
@@ -131,23 +133,23 @@ export const authModule = new Elysia({ prefix: "/auth", tags: ["Auth"] })
         target,
         codeHash: sha256(code),
         purpose: "LOGIN",
-        expiresAt: new Date(Date.now() + 10 * 60_000),
+        expiresAt: new Date(Date.now() + OTP_TTL_MINUTES * 60_000),
       });
-      const message = `${code} is your BookMeStays verification code. It expires in 10 minutes.`;
-      notifyLater(
-        isEmail(target)
-          ? sendEmail({ to: target, subject: "Your BookMeStays code", html: `<p>${message}</p>`, text: message })
-          : sendSms(target, message, code),
-      );
-      return { sent: true, target, ...(env.isProd ? {} : { devCode: code }) };
+      try {
+        await sendEmail({ to: target, ...otpEmail({ code, minutes: OTP_TTL_MINUTES }) });
+      } catch (err) {
+        console.error("OTP email failed:", err);
+        throw badRequest("Couldn't send the code to this email. Please try again");
+      }
+      return { sent: true, target };
     },
-    { body: t.Object({ target: t.String({ minLength: 5 }) }) },
+    { body: t.Object({ target: t.String({ format: "email" }) }) },
   )
 
   .post(
     "/otp/verify",
     async ({ body, cookie, headers, startSession }) => {
-      const target = isEmail(body.target) ? body.target.trim().toLowerCase() : normalizePhone(body.target);
+      const target = body.target.trim().toLowerCase();
       const otp = await db.query.otpCodes.findFirst({
         where: and(
           eq(otpCodes.target, target),
@@ -164,33 +166,20 @@ export const authModule = new Elysia({ prefix: "/auth", tags: ["Auth"] })
       }
       await db.update(otpCodes).set({ consumedAt: new Date() }).where(eq(otpCodes.id, otp.id));
 
-      const byEmail = isEmail(target);
-      let user = await db.query.users.findFirst({
-        where: byEmail ? sql`lower(${users.email}) = ${target}` : eq(users.phone, target),
-      });
+      let user = await db.query.users.findFirst({ where: sql`lower(${users.email}) = ${target}` });
       if (!user) {
         [user] = await db
           .insert(users)
-          .values({
-            name: body.name?.trim() || null,
-            email: byEmail ? target : null,
-            phone: byEmail ? null : target,
-            emailVerified: byEmail,
-            phoneVerified: !byEmail,
-            role: "CUSTOMER",
-          })
+          .values({ name: body.name?.trim() || null, email: target, emailVerified: true, role: "CUSTOMER" })
           .returning();
       } else {
-        await db
-          .update(users)
-          .set(byEmail ? { emailVerified: true } : { phoneVerified: true })
-          .where(eq(users.id, user.id));
+        await db.update(users).set({ emailVerified: true }).where(eq(users.id, user.id));
       }
       return startSession(user.id, cookie, { userAgent: headers["user-agent"] });
     },
     {
       body: t.Object({
-        target: t.String({ minLength: 5 }),
+        target: t.String({ format: "email" }),
         code: t.String({ minLength: 6, maxLength: 6 }),
         name: t.Optional(t.String({ maxLength: 160 })),
       }),

@@ -62,11 +62,6 @@ export const env = {
     smtpPass: optional("SMTP_PASS"),
     from: optional("EMAIL_FROM", "BookMeStays <no-reply@bookmestays.com>"),
   },
-  sms: {
-    provider: optional("SMS_PROVIDER", "console"),
-    msg91AuthKey: optional("MSG91_AUTH_KEY"),
-    msg91OtpTemplateId: optional("MSG91_OTP_TEMPLATE_ID"),
-  },
 
   channelManagers: {
     channelCode: optional("CM_CHANNEL_CODE", "BOOKMESTAYS"),

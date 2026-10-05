@@ -132,7 +132,7 @@ async function seedSettings() {
       { key: "booking", value: { holdMinutes: 15, maxRoomsPerBooking: 5, maxNights: 30 } },
       {
         key: "support",
-        value: { phone: "+91 00000 00000", email: "support@bookmestays.com", whatsapp: "", social: {} },
+        value: { phone: "+91 00000 00000", email: "bookmestaysupport@gmail.com", whatsapp: "", social: {} },
       },
     ])
     .onConflictDoNothing({ target: siteSettings.key });
