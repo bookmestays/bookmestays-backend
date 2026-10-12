@@ -33,7 +33,7 @@ export const env = {
   jwtAccessSecret: required("JWT_ACCESS_SECRET"),
   jwtRefreshSecret: required("JWT_REFRESH_SECRET"),
   accessTokenTtl: optional("ACCESS_TOKEN_TTL", "15m"),
-  refreshTokenTtlDays: Number(optional("REFRESH_TOKEN_TTL_DAYS", "30")),
+  refreshTokenTtlDays: Number(optional("REFRESH_TOKEN_TTL_DAYS", "365")),
   encryptionKey: required("ENCRYPTION_KEY"),
   seedAdminEmail: optional("SEED_ADMIN_EMAIL", "admin@bookmestays.com"),
   seedAdminPassword: optional("SEED_ADMIN_PASSWORD", "ChangeMe@123"),

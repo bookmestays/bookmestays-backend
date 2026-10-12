@@ -1,7 +1,7 @@
 // Resolves /public/home: active banners + each active home section resolved per its type.
 import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { db } from "../../db";
-import { areas, banners, cities, collections, experiences, homeSections, properties } from "../../db/schema";
+import { areas, banners, cities, collections, experiences, homeAds, homeSections, properties, testimonials } from "../../db/schema";
 import {
   activeCollectionCards,
   activeExperienceCards,
@@ -57,6 +57,53 @@ export async function activeBanners() {
   }));
 }
 
+/** Active ad posters (inside their schedule), in slot order. */
+export async function activeHomeAds() {
+  const now = new Date();
+  const rows = await db
+    .select()
+    .from(homeAds)
+    .where(
+      and(
+        eq(homeAds.isActive, true),
+        or(isNull(homeAds.startsAt), lte(homeAds.startsAt, now)),
+        or(isNull(homeAds.endsAt), gt(homeAds.endsAt, now)),
+      ),
+    )
+    .orderBy(asc(homeAds.sort), desc(homeAds.createdAt));
+  return rows.map((a) => ({
+    id: a.id,
+    title: a.title,
+    afterSection: a.afterSection,
+    imageUrl: a.imageUrl,
+    mobileImageUrl: a.mobileImageUrl,
+    linkUrl: a.linkUrl,
+  }));
+}
+
+/** Active testimonials for the homepage carousel, featured ones first. */
+export async function activeTestimonials(limit = 12) {
+  const rows = await db
+    .select({ t: testimonials, propertyName: properties.name, propertySlug: properties.slug, propertyStatus: properties.status })
+    .from(testimonials)
+    .leftJoin(properties, eq(properties.id, testimonials.propertyId))
+    .where(eq(testimonials.isActive, true))
+    .orderBy(desc(testimonials.isFeatured), asc(testimonials.sort), desc(testimonials.createdAt))
+    .limit(limit);
+  return rows.map(({ t, propertyName, propertySlug, propertyStatus }) => ({
+    id: t.id,
+    authorName: t.authorName,
+    authorTitle: t.authorTitle,
+    authorLocation: t.authorLocation,
+    avatarUrl: t.avatarUrl,
+    quote: t.quote,
+    rating: t.rating,
+    isFeatured: t.isFeatured,
+    propertyName: propertyStatus === "LIVE" ? (propertyName ?? null) : null,
+    propertySlug: propertyStatus === "LIVE" ? (propertySlug ?? null) : null,
+  }));
+}
+
 export async function propertyTypeTiles(cityId?: string | null, images?: Record<string, unknown>) {
   const rows = await db.execute<{ type: string; n: number; image: string | null }>(sql`
     SELECT p.type::text AS type, count(*)::int AS n,
@@ -93,6 +140,18 @@ async function resolveSection(s: SectionRow) {
             ),
             limit,
           );
+      return { ...base, type: s.type, items };
+    }
+    case "GOLD":
+    case "RISING": {
+      const cityId = await resolveCityId(config);
+      const items = await livePropertyCards(
+        and(
+          s.type === "GOLD" ? eq(properties.isGold, true) : eq(properties.isRising, true),
+          cityId ? eq(properties.cityId, cityId) : undefined,
+        ),
+        limit,
+      );
       return { ...base, type: s.type, items };
     }
     case "PROPERTY_TYPES": {
@@ -142,7 +201,12 @@ async function resolveSection(s: SectionRow) {
       ]);
       return { ...base, type: s.type, city: cityCard, areas: areaRows.map(toArea), items, experiences: exps };
     }
-    case "WHY_BOOKMESTAYS":
+    case "TESTIMONIALS":
+    case "WHY_BOOKMESTAYS": {
+      // The legacy "Why BookMeStays" slot now renders the testimonials carousel.
+      const items = await activeTestimonials(num(config.limit, 12));
+      return { ...base, type: "TESTIMONIALS" as const, items };
+    }
     default:
       return { ...base, type: s.type, items: [] as [] };
   }
@@ -154,7 +218,11 @@ export async function homePayload() {
     .from(homeSections)
     .where(eq(homeSections.isActive, true))
     .orderBy(asc(homeSections.sort));
-  const [bannerList, sections] = await Promise.all([activeBanners(), Promise.all(sectionRows.map(resolveSection))]);
-  return { banners: bannerList, sections };
+  const [bannerList, sections, ads] = await Promise.all([
+    activeBanners(),
+    Promise.all(sectionRows.map(resolveSection)),
+    activeHomeAds(),
+  ]);
+  return { banners: bannerList, sections, ads };
 }
 

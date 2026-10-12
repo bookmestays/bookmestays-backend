@@ -78,15 +78,25 @@ export async function issueTokens(u: AuthUser, meta: { userAgent?: string; ip?: 
   return { accessToken: await signAccessToken(u), refreshToken: `${session.id}.${secret}`, expiresAt };
 }
 
+// A just-rotated token stays usable briefly so parallel refreshes (several tabs
+// waking up at once) don't log the user out.
+const ROTATION_GRACE_MS = 60_000;
+
 /** Validates + rotates a refresh token. Returns the user id or null. */
 export async function rotateRefreshToken(token: string) {
   const [sessionId, secret] = token.split(".");
   if (!sessionId || !secret) return null;
   const session = await db.query.sessions.findFirst({
-    where: and(eq(sessions.id, sessionId), isNull(sessions.revokedAt), gt(sessions.expiresAt, new Date())),
+    where: and(eq(sessions.id, sessionId), gt(sessions.expiresAt, new Date())),
   });
   if (!session || session.refreshTokenHash !== sha256(secret)) return null;
-  await db.update(sessions).set({ revokedAt: new Date() }).where(eq(sessions.id, sessionId));
+  if (session.revokedAt) {
+    return Date.now() - session.revokedAt.getTime() < ROTATION_GRACE_MS ? session.userId : null;
+  }
+  await db
+    .update(sessions)
+    .set({ revokedAt: new Date() })
+    .where(and(eq(sessions.id, sessionId), isNull(sessions.revokedAt)));
   return session.userId;
 }
 

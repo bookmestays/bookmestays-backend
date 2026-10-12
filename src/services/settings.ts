@@ -18,6 +18,14 @@ export type BookingSettings = { holdMinutes: number; maxRoomsPerBooking: number;
  */
 export type RankingSettings = { mode: "MOST_BOOKED_FIRST" | "PINS_FIRST" };
 
+/**
+ * Auto-awarded performance tiers. A property earns a tier when it receives at least
+ * `minBookings` real bookings (confirmed+) within the trailing `windowDays` days.
+ * The two tiers are independent — a property can hold both.
+ */
+export type TierRule = { enabled: boolean; windowDays: number; minBookings: number };
+export type TierSettings = { gold: TierRule; rising: TierRule };
+
 const DEFAULT_TAX: TaxSettings = {
   roomGstSlabs: [
     { upToPerNight: 750000, rateBps: 500 },
@@ -29,6 +37,10 @@ const DEFAULT_TAX: TaxSettings = {
 };
 const DEFAULT_BOOKING: BookingSettings = { holdMinutes: 15, maxRoomsPerBooking: 5, maxNights: 30 };
 const DEFAULT_RANKING: RankingSettings = { mode: "MOST_BOOKED_FIRST" };
+const DEFAULT_TIERS: TierSettings = {
+  gold: { enabled: true, windowDays: 7, minBookings: 12 },
+  rising: { enabled: true, windowDays: 7, minBookings: 15 },
+};
 
 const TTL_MS = 30_000;
 const cache = new Map<string, { value: unknown; at: number }>();
@@ -42,6 +54,10 @@ async function getSetting<T extends object>(key: string, fallback: T): Promise<T
   return value;
 }
 
+/** Drop the cached value for a key (or all) so the next read reflects a just-saved change. */
+export const invalidateSettingCache = (key?: string) => (key ? cache.delete(key) : cache.clear());
+
 export const getTaxSettings = () => getSetting("tax", DEFAULT_TAX);
 export const getBookingSettings = () => getSetting("booking", DEFAULT_BOOKING);
 export const getRankingSettings = () => getSetting("ranking", DEFAULT_RANKING);
+export const getTierSettings = () => getSetting("tiers", DEFAULT_TIERS);

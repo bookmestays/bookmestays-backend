@@ -4,6 +4,7 @@
 import { completeStays, expireHolds } from "../services/bookings";
 import { expireModificationHolds } from "../services/bookings/modify";
 import { recalcPopularity } from "../services/catalog/popularity";
+import { recalcTiers } from "../services/catalog/tiers";
 import { retryDuePushes } from "../services/channel/outbound";
 import { generateSettlements } from "../services/settlements";
 import { todayIST } from "../lib/utils";
@@ -42,6 +43,8 @@ export function startJobs() {
   every(60_000, "expire-holds", expireHolds);
   // keeps the "most booked" ranking fresh even if an event was missed
   every(60 * 60_000, "popularity", () => recalcPopularity());
+  // re-evaluates Gold / Rising badges as bookings age out of the trailing window
+  every(60 * 60_000, "tiers", () => recalcTiers());
   every(60_000, "expire-modification-holds", expireModificationHolds);
   every(60 * 60_000, "complete-stays", completeStays);
   every(5 * 60_000, "channel-retries", retryDuePushes);
@@ -57,5 +60,6 @@ export function startJobs() {
   setTimeout(() => {
     void run("expire-holds", expireHolds);
     void run("complete-stays", completeStays);
+    void run("tiers", () => recalcTiers());
   }, 5_000).unref?.();
 }

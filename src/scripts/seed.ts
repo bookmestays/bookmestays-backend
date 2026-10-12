@@ -3,7 +3,8 @@
 import { sql } from "drizzle-orm";
 import { env } from "../config/env";
 import { db } from "../db";
-import { amenities, cities, homeSections, siteSettings, users } from "../db/schema";
+import { amenities, cities, homeSections, siteSettings, testimonials, users } from "../db/schema";
+import { eq } from "drizzle-orm";
 import { slugify } from "../lib/utils";
 
 async function seedAdmin() {
@@ -96,19 +97,82 @@ async function seedCities() {
 
 async function seedHomeSections() {
   const count = await db.$count(homeSections);
-  if (count > 0) return console.log("• home sections exist");
+  if (count > 0) {
+    // Migrate existing installs: the old "Why BookMeStays" slot now hosts testimonials,
+    // and add the Gold / Rising rows if they are missing. (Never deletes existing rows.)
+    await db
+      .update(homeSections)
+      .set({ type: "TESTIMONIALS", title: "Loved by our guests", subtitle: "Real stays, real stories" })
+      .where(eq(homeSections.type, "WHY_BOOKMESTAYS"));
+    const all = await db.select().from(homeSections);
+    let nextSort = Math.max(0, ...all.map((s) => s.sort)) + 1;
+    for (const [type, title, subtitle] of [
+      ["GOLD", "Gold Collection", "Our most-booked, guest-loved stays"] as const,
+      ["RISING", "Rising Stays", "Fast-rising favourites gaining momentum"] as const,
+    ]) {
+      if (all.some((s) => s.type === type)) continue;
+      await db.insert(homeSections).values({ type, title, subtitle, config: { limit: 12 }, sort: nextSort++ });
+    }
+    return console.log("• home sections migrated (testimonials + tiers)");
+  }
   await db.insert(homeSections).values([
     { type: "RECOMMENDED", title: "Recommended Stays", subtitle: "Handpicked for you", config: { limit: 10 }, sort: 1 },
     { type: "PROPERTY_TYPES", title: "Explore by Property Type", config: {}, sort: 2 },
-    { type: "FEATURED", title: "Featured & Popular Stays", config: { limit: 10 }, sort: 3 },
-    { type: "VIDEO_DISCOVERY", title: "See it before you book it", subtitle: "Short walkthroughs of real stays", config: { limit: 12 }, sort: 4 },
-    { type: "EXPERIENCES", title: "Experiences", subtitle: "Make more of your stay", config: { limit: 8 }, sort: 5 },
-    { type: "CITIES", title: "Explore by City", config: {}, sort: 6 },
-    { type: "COLLECTIONS", title: "Curated Collections", config: { limit: 6 }, sort: 7 },
-    { type: "CITY_SPOTLIGHT", title: "The Best Kind of Stay in Jaipur", config: { citySlug: "jaipur" }, sort: 8 },
-    { type: "WHY_BOOKMESTAYS", title: "Why BookMeStays", config: {}, sort: 9 },
+    { type: "GOLD", title: "Gold Collection", subtitle: "Our most-booked, guest-loved stays", config: { limit: 12 }, sort: 3 },
+    { type: "RISING", title: "Rising Stays", subtitle: "Fast-rising favourites gaining momentum", config: { limit: 12 }, sort: 4 },
+    { type: "FEATURED", title: "Featured & Popular Stays", config: { limit: 10 }, sort: 5 },
+    { type: "VIDEO_DISCOVERY", title: "See it before you book it", subtitle: "Short walkthroughs of real stays", config: { limit: 12 }, sort: 6 },
+    { type: "EXPERIENCES", title: "Experiences", subtitle: "Make more of your stay", config: { limit: 8 }, sort: 7 },
+    { type: "CITIES", title: "Explore by City", config: {}, sort: 8 },
+    { type: "COLLECTIONS", title: "Curated Collections", config: { limit: 6 }, sort: 9 },
+    { type: "CITY_SPOTLIGHT", title: "The Best Kind of Stay in Jaipur", config: { citySlug: "jaipur" }, sort: 10 },
+    { type: "TESTIMONIALS", title: "Loved by our guests", subtitle: "Real stays, real stories", config: {}, sort: 11 },
   ]);
-  console.log("• home sections: 9");
+  console.log("• home sections: 11");
+}
+
+const SAMPLE_TESTIMONIALS = [
+  {
+    authorName: "Ananya Sharma",
+    authorTitle: "Family holiday",
+    authorLocation: "Mumbai",
+    quote:
+      "The video walkthrough was exactly what we got — no surprises at check-in. Booking for my parents and kids was effortless, and the stay was spotless. BookMeStays is the only site I trust now.",
+    rating: 5,
+    isFeatured: true,
+    sort: 0,
+  },
+  {
+    authorName: "Rahul Verma",
+    authorTitle: "Weekend getaway",
+    authorLocation: "Delhi",
+    quote: "Found a private pool villa near Lonavala in minutes. Transparent pricing with taxes shown upfront — paid exactly what I saw. Brilliant experience end to end.",
+    rating: 5,
+    sort: 1,
+  },
+  {
+    authorName: "Meera Nair",
+    authorTitle: "Honeymoon",
+    authorLocation: "Kochi",
+    quote: "We wanted something special and the curated collections made it so easy. The heritage stay we picked was even better than the photos. Highly recommend!",
+    rating: 5,
+    sort: 2,
+  },
+  {
+    authorName: "Arjun Mehta",
+    authorTitle: "Business trip",
+    authorLocation: "Bengaluru",
+    quote: "Clear room info, real reviews and a booking flow that just works. Changed my dates once and it was painless. This is how booking a stay should feel.",
+    rating: 4,
+    sort: 3,
+  },
+];
+
+async function seedTestimonials() {
+  const count = await db.$count(testimonials);
+  if (count > 0) return console.log("• testimonials exist");
+  await db.insert(testimonials).values(SAMPLE_TESTIMONIALS);
+  console.log(`• testimonials: ${SAMPLE_TESTIMONIALS.length}`);
 }
 
 async function seedSettings() {
@@ -131,6 +195,13 @@ async function seedSettings() {
       },
       { key: "booking", value: { holdMinutes: 15, maxRoomsPerBooking: 5, maxNights: 30 } },
       {
+        key: "tiers",
+        value: {
+          gold: { enabled: true, windowDays: 7, minBookings: 12 },
+          rising: { enabled: true, windowDays: 7, minBookings: 15 },
+        },
+      },
+      {
         key: "support",
         value: { phone: "+91 00000 00000", email: "bookmestaysupport@gmail.com", whatsapp: "", social: {} },
       },
@@ -143,6 +214,7 @@ await seedAdmin();
 await seedAmenities();
 await seedCities();
 await seedHomeSections();
+await seedTestimonials();
 await seedSettings();
 console.log("✅ seed complete");
 process.exit(0);

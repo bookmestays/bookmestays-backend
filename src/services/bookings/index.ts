@@ -21,6 +21,7 @@ import { notifyLater, sendEmail } from "../../lib/notify";
 import { addDays, bookingCode, nightsBetween, todayIST } from "../../lib/utils";
 import { activeConnectionFor, queueReservationPush } from "../channel/outbound";
 import { recalcPopularity, refreshPopularityFor } from "../catalog/popularity";
+import { refreshTiersFor } from "../catalog/tiers";
 import { postBookingEntries, postCancellationEntries } from "../ledger";
 import {
   buildQuote,
@@ -374,6 +375,7 @@ export async function confirmPayment(p: {
 
   if (result.outcome === "CONFIRMED") {
     await recordRouteTransfer(pre.id).catch((err) => console.error("route transfer record failed", err));
+    refreshTiersFor(result.booking.propertyId);
     notifyLater(sendConfirmationEmails(result.booking));
     notifyLater(queueReservationPush(result.booking.id, "NEW"));
   } else if (result.outcome === "REFUND_REQUIRED") {

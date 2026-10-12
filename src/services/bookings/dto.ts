@@ -1,7 +1,7 @@
 // Booking → API DTO mappers (BookingSummary / BookingDetail in frontend src/lib/types.ts).
-import { eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../../db";
-import { bookingRooms, bookings, cities, properties, reviews } from "../../db/schema";
+import { bookingRooms, bookings, cities, partners, payments, properties, reviews } from "../../db/schema";
 
 export type BookingRow = typeof bookings.$inferSelect;
 export type Audience = "guest" | "partner" | "admin";
@@ -29,6 +29,27 @@ const loadProps = (ids: string[]) =>
     .from(properties)
     .leftJoin(cities, eq(cities.id, properties.cityId))
     .where(inArray(properties.id, ids));
+
+/** Seller + payment details printed on the guest's invoice. */
+async function invoiceInfo(b: BookingRow) {
+  const [seller] = await db
+    .select({ legalName: partners.legalName, gstin: partners.gstin, pincode: properties.pincode })
+    .from(properties)
+    .innerJoin(partners, eq(partners.id, properties.partnerId))
+    .where(eq(properties.id, b.propertyId));
+  const payment = await db.query.payments.findFirst({
+    where: and(eq(payments.bookingId, b.id), inArray(payments.status, ["CAPTURED", "REFUNDED", "PARTIALLY_REFUNDED"])),
+    orderBy: desc(payments.createdAt),
+  });
+  return {
+    sellerLegalName: seller?.legalName ?? null,
+    sellerGstin: seller?.gstin ?? null,
+    propertyPincode: seller?.pincode ?? null,
+    paymentMethod: payment?.method ?? null,
+    paymentReference: payment?.providerPaymentId ?? null,
+    paidAt: payment?.createdAt.toISOString() ?? null,
+  };
+}
 
 async function roomsOf(bookingIds: string[]) {
   const map = new Map<string, (typeof bookingRooms.$inferSelect)[]>();
@@ -86,7 +107,7 @@ export async function bookingSummaries(rows: BookingRow[]): Promise<BookingSumma
 }
 
 export async function bookingDetail(b: BookingRow, audience: Audience) {
-  const [props, rooms] = await Promise.all([propertyInfo([b.propertyId]), roomsOf([b.id])]);
+  const [props, rooms, invoice] = await Promise.all([propertyInfo([b.propertyId]), roomsOf([b.id]), invoiceInfo(b)]);
   const p = props.get(b.propertyId);
   const lines = rooms.get(b.id) ?? [];
   const base = summary(b, p, lines);
@@ -113,6 +134,7 @@ export async function bookingDetail(b: BookingRow, audience: Audience) {
     confirmedAt: b.confirmedAt?.toISOString() ?? null,
     cancelledAt: b.cancelledAt?.toISOString() ?? null,
     cancelReason: b.cancelReason,
+    invoice,
     property: {
       ...base.property,
       address: p?.address ?? null,

@@ -76,6 +76,7 @@ export const mediaOwnerType = pgEnum("media_owner_type", [
   "CITY",
   "COLLECTION",
   "BANNER",
+  "TESTIMONIAL",
 ]);
 export const mediaKind = pgEnum("media_kind", ["IMAGE", "VIDEO"]);
 export const mediaTag = pgEnum("media_tag", [
@@ -153,6 +154,9 @@ export const homeSectionType = pgEnum("home_section_type", [
   "COLLECTIONS",
   "CITY_SPOTLIGHT",
   "WHY_BOOKMESTAYS",
+  "GOLD", // auto-curated: properties that hit the admin's Gold booking target
+  "RISING", // auto-curated: properties that hit the admin's Rising booking target
+  "TESTIMONIALS", // guest testimonials carousel (replaces WHY_BOOKMESTAYS)
 ]);
 
 export const channelProvider = pgEnum("channel_provider", ["AXISROOMS", "EZEE", "STAAH", "SITEMINDER"]);
@@ -376,6 +380,11 @@ export const properties = pgTable(
     isFeatured: boolean("is_featured").notNull().default(false),
     isRecommended: boolean("is_recommended").notNull().default(false),
     curationRank: integer("curation_rank").notNull().default(0),
+    // Auto-awarded performance tiers (recomputed from recent bookings, see services/catalog/tiers.ts).
+    // Both can be true: a property that hits both targets earns both badges.
+    isGold: boolean("is_gold").notNull().default(false),
+    isRising: boolean("is_rising").notNull().default(false),
+    tierUpdatedAt: timestamp("tier_updated_at", { withTimezone: true }),
     // When connected to a channel manager, ARI (rates/availability/inventory) is read-only in our panel
     channelManaged: boolean("channel_managed").notNull().default(false),
     seo: jsonb("seo").$type<Seo>(),
@@ -675,6 +684,51 @@ export const homeSections = pgTable("home_sections", {
   isActive: boolean("is_active").notNull().default(true),
   ...timestamps,
 });
+
+// Advertising posters shown as a strip after a home section (admin managed).
+// Several active posters in the same slot rotate. Dimensions are validated on
+// upload (see HOME_AD_SPECS in modules/admin/cms.ts) so they always fit the slot.
+export const homeAds = pgTable(
+  "home_ads",
+  {
+    id: id(),
+    title: varchar("title", { length: 160 }).notNull(), // internal name + alt text
+    afterSection: homeSectionType("after_section").notNull(),
+    imageUrl: text("image_url").notNull(), // desktop 8:1
+    imageWidth: integer("image_width").notNull(),
+    imageHeight: integer("image_height").notNull(),
+    mobileImageUrl: text("mobile_image_url"), // optional 3:1
+    mobileImageWidth: integer("mobile_image_width"),
+    mobileImageHeight: integer("mobile_image_height"),
+    linkUrl: text("link_url"),
+    sort: integer("sort").notNull().default(0),
+    isActive: boolean("is_active").notNull().default(true),
+    startsAt: timestamp("starts_at", { withTimezone: true }),
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [index("home_ads_slot_idx").on(t.afterSection, t.sort)],
+);
+
+// Guest testimonials shown in the homepage TESTIMONIALS carousel (admin curated).
+export const testimonials = pgTable(
+  "testimonials",
+  {
+    id: id(),
+    authorName: varchar("author_name", { length: 160 }).notNull(),
+    authorTitle: varchar("author_title", { length: 160 }), // e.g. "Stayed in Jaipur" or "Honeymoon trip"
+    authorLocation: varchar("author_location", { length: 160 }), // e.g. "Mumbai"
+    avatarUrl: text("avatar_url"),
+    quote: text("quote").notNull(),
+    rating: integer("rating").notNull().default(5), // 1-5 stars
+    propertyId: uuid("property_id").references(() => properties.id, { onDelete: "set null" }),
+    isActive: boolean("is_active").notNull().default(true),
+    isFeatured: boolean("is_featured").notNull().default(false), // highlighted as the large/lead card
+    sort: integer("sort").notNull().default(0),
+    ...timestamps,
+  },
+  (t) => [index("testimonials_active_idx").on(t.isActive, t.sort)],
+);
 
 // Key/value site settings (support phone, social links, tax config…)
 export const siteSettings = pgTable("site_settings", {

@@ -66,6 +66,8 @@ export async function buildPropertyCards(rows: PropertyRow[], priceOverride?: Ma
       previewVideoPosterUrl: p.previewVideoPosterUrl,
       highlights: p.highlights,
       amenities: (amenityMap.get(p.id) ?? []).slice(0, 4).map(({ code, name, icon }) => ({ code, name, icon })),
+      isGold: p.isGold,
+      isRising: p.isRising,
       lat: p.lat,
       lng: p.lng,
     };

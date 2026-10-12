@@ -12,6 +12,8 @@ import { createUserWithTempPassword, normalizePhone } from "../../services/catal
 import { iso } from "../../services/catalog/dto";
 import { recomputeRating } from "../../services/catalog/maintenance";
 import { buildReviews } from "../../services/catalog/property-detail";
+import { recalcTiers } from "../../services/catalog/tiers";
+import { invalidateSettingCache } from "../../services/settings";
 import { invalidateMetaCache } from "../public";
 import { defined, lit, money, nstr, pageQuery } from "./schemas";
 
@@ -130,6 +132,23 @@ const SETTINGS_SCHEMAS = {
     // MOST_BOOKED_FIRST: stays guests book most come first; PINS_FIRST: the admin's manual order wins
     mode: t.Optional(t.Union([t.Literal("MOST_BOOKED_FIRST"), t.Literal("PINS_FIRST")])),
   }),
+  // Gold / Rising performance badges — each: bookings received within a trailing window.
+  tiers: t.Object({
+    gold: t.Optional(
+      t.Object({
+        enabled: t.Boolean(),
+        windowDays: t.Integer({ minimum: 1, maximum: 365 }),
+        minBookings: t.Integer({ minimum: 1, maximum: 100000 }),
+      }),
+    ),
+    rising: t.Optional(
+      t.Object({
+        enabled: t.Boolean(),
+        windowDays: t.Integer({ minimum: 1, maximum: 365 }),
+        minBookings: t.Integer({ minimum: 1, maximum: 100000 }),
+      }),
+    ),
+  }),
   support: t.Object({
     phone: t.Optional(t.String({ maxLength: 40 })),
     email: t.Optional(t.String({ maxLength: 255 })),
@@ -148,6 +167,7 @@ async function saveSetting(actor: Parameters<typeof audit>[0], key: SettingKey, 
     .values({ key, value: merged })
     .onConflictDoUpdate({ target: siteSettings.key, set: { value: merged, updatedAt: new Date() } })
     .returning();
+  invalidateSettingCache(key);
   if (key === "support") invalidateMetaCache();
   await audit(actor, "settings.update", "setting", key, value);
   return { key, value: row.value, updatedAt: iso(row.updatedAt) };
@@ -383,6 +403,19 @@ export const adminOps = new Elysia({ name: "admin-ops" })
       .put("/settings/support", ({ authUser, body }) => saveSetting(authUser, "support", body), {
         body: SETTINGS_SCHEMAS.support,
       })
+      // Saving tier targets immediately re-evaluates every property against the new rules.
+      .put(
+        "/settings/tiers",
+        async ({ authUser, body }) => {
+          const saved = await saveSetting(authUser, "tiers", body);
+          const changed = await recalcTiers().catch((err) => {
+            console.error("recalcTiers after settings change failed", err);
+            return 0;
+          });
+          return { ...saved, propertiesUpdated: changed };
+        },
+        { body: SETTINGS_SCHEMAS.tiers },
+      )
 
       // ─── Audit logs ───────────────────────────────────────────────────────
       .get(

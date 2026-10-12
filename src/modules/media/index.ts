@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { db } from "../../db";
-import { banners, cities, collections, experiences, media, nearbyPlaces, properties, roomTypes } from "../../db/schema";
+import { banners, cities, collections, experiences, media, nearbyPlaces, properties, roomTypes, testimonials } from "../../db/schema";
 import { audit } from "../../lib/audit";
 import { ADMIN_ROLES, authPlugin, PARTNER_ROLES, type AuthUser } from "../../lib/auth";
 import { AppError, badRequest, forbidden, notFound } from "../../lib/errors";
@@ -20,7 +20,9 @@ import {
   writeLocal,
 } from "../../services/catalog/storage";
 
-const OWNER_TYPES = ["PROPERTY", "ROOM_TYPE", "NEARBY_PLACE", "EXPERIENCE", "CITY", "COLLECTION", "BANNER"] as const;
+const OWNER_TYPES = ["PROPERTY", "ROOM_TYPE", "NEARBY_PLACE", "EXPERIENCE", "CITY", "COLLECTION", "BANNER", "TESTIMONIAL"] as const;
+// Owner types whose asset can be uploaded before the owner row exists (ownerId optional).
+const OWNERLESS_TYPES = ["BANNER", "TESTIMONIAL"];
 const PARTNER_OWNER_TYPES = ["PROPERTY", "ROOM_TYPE", "NEARBY_PLACE"];
 const MEDIA_TAGS = [
   "EXTERIOR", "ROOM_WALKTHROUGH", "ROOM", "BATHROOM", "VIEW", "COMMON_AREA",
@@ -78,6 +80,7 @@ async function ownerExists(ownerType: OwnerType, ownerId: string) {
     CITY: cities,
     COLLECTION: collections,
     BANNER: banners,
+    TESTIMONIAL: testimonials,
   }[ownerType];
   const [r] = await db.select({ id: table.id }).from(table).where(eq(table.id, ownerId));
   return !!r;
@@ -89,7 +92,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 async function assertAccess(user: AuthUser, ownerType: OwnerType, ownerId: string | null | undefined) {
   if (ownerId && !UUID_RE.test(ownerId)) throw notFound("Owner");
   if (ADMIN_ROLES.includes(user.role)) {
-    if (ownerType !== "BANNER" && !ownerId) throw badRequest("ownerId is required");
+    if (!OWNERLESS_TYPES.includes(ownerType) && !ownerId) throw badRequest("ownerId is required");
     if (ownerId && !(await ownerExists(ownerType, ownerId))) throw notFound("Owner");
     return;
   }

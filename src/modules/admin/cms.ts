@@ -9,9 +9,12 @@ import {
   collectionItems,
   collections,
   experiences,
+  homeAds,
   homeSections,
   properties,
+  testimonials,
 } from "../../db/schema";
+import { homeAdSizeError } from "../../lib/home-ads";
 import { audit } from "../../lib/audit";
 import { ADMIN_ROLES, authPlugin } from "../../lib/auth";
 import { badRequest, conflict, notFound } from "../../lib/errors";
@@ -135,6 +138,37 @@ const collectionFields = {
   seo: t.Optional(t.Nullable(seoSchema)),
 };
 
+// ─── Testimonials ─────────────────────────────────────────────────────────────
+
+const toTestimonial = (t: typeof testimonials.$inferSelect) => ({
+  id: t.id,
+  authorName: t.authorName,
+  authorTitle: t.authorTitle,
+  authorLocation: t.authorLocation,
+  avatarUrl: t.avatarUrl,
+  quote: t.quote,
+  rating: t.rating,
+  propertyId: t.propertyId,
+  isActive: t.isActive,
+  isFeatured: t.isFeatured,
+  sort: t.sort,
+  createdAt: iso(t.createdAt)!,
+  updatedAt: iso(t.updatedAt)!,
+});
+
+const testimonialFields = {
+  authorName: t.String({ minLength: 2, maxLength: 160 }),
+  authorTitle: t.Optional(nstr(160)),
+  authorLocation: t.Optional(nstr(160)),
+  avatarUrl: t.Optional(nstr(2000)),
+  quote: t.String({ minLength: 4, maxLength: 2000 }),
+  rating: t.Optional(t.Integer({ minimum: 1, maximum: 5 })),
+  propertyId: t.Optional(t.Nullable(t.String({ format: "uuid" }))),
+  isActive: t.Optional(t.Boolean()),
+  isFeatured: t.Optional(t.Boolean()),
+  sort: t.Optional(t.Integer()),
+};
+
 // ─── Banners ──────────────────────────────────────────────────────────────────
 
 type BannerRow = typeof banners.$inferSelect;
@@ -190,6 +224,7 @@ const bannerCols = (b: Record<string, unknown>) => {
 const HOME_SECTION_TYPES = [
   "RECOMMENDED", "PROPERTY_TYPES", "FEATURED", "VIDEO_DISCOVERY", "EXPERIENCES",
   "CITIES", "COLLECTIONS", "CITY_SPOTLIGHT", "WHY_BOOKMESTAYS",
+  "GOLD", "RISING", "TESTIMONIALS",
 ] as const;
 const toSection = (s: typeof homeSections.$inferSelect) => ({
   id: s.id,
@@ -203,6 +238,58 @@ const toSection = (s: typeof homeSections.$inferSelect) => ({
 });
 const listSections = async () =>
   (await db.select().from(homeSections).orderBy(asc(homeSections.sort), asc(homeSections.createdAt))).map(toSection);
+
+// ─── Home ad posters ──────────────────────────────────────────────────────────
+
+const toHomeAd = (a: typeof homeAds.$inferSelect) => ({
+  id: a.id,
+  title: a.title,
+  afterSection: a.afterSection,
+  imageUrl: a.imageUrl,
+  imageWidth: a.imageWidth,
+  imageHeight: a.imageHeight,
+  mobileImageUrl: a.mobileImageUrl,
+  mobileImageWidth: a.mobileImageWidth,
+  mobileImageHeight: a.mobileImageHeight,
+  linkUrl: a.linkUrl,
+  sort: a.sort,
+  isActive: a.isActive,
+  startsAt: iso(a.startsAt),
+  endsAt: iso(a.endsAt),
+  createdAt: iso(a.createdAt)!,
+  updatedAt: iso(a.updatedAt)!,
+});
+
+const homeAdFields = {
+  title: t.String({ minLength: 2, maxLength: 160 }),
+  afterSection: lit(HOME_SECTION_TYPES),
+  imageUrl: t.String({ minLength: 1, maxLength: 2000 }),
+  imageWidth: t.Integer({ minimum: 1 }),
+  imageHeight: t.Integer({ minimum: 1 }),
+  mobileImageUrl: t.Optional(nstr(2000)),
+  mobileImageWidth: t.Optional(t.Nullable(t.Integer({ minimum: 1 }))),
+  mobileImageHeight: t.Optional(t.Nullable(t.Integer({ minimum: 1 }))),
+  linkUrl: t.Optional(nstr(2000)),
+  sort: t.Optional(t.Integer()),
+  isActive: t.Optional(t.Boolean()),
+  startsAt: t.Optional(t.Nullable(t.String({ format: "date-time" }))),
+  endsAt: t.Optional(t.Nullable(t.String({ format: "date-time" }))),
+};
+
+/** Re-checks poster dimensions server-side (the merged row, so partial updates are covered too). */
+function assertHomeAdSizes(a: Partial<typeof homeAds.$inferSelect>) {
+  const err =
+    (a.imageUrl ? homeAdSizeError("desktop", a.imageWidth ?? 0, a.imageHeight ?? 0) : "Desktop poster is required") ??
+    (a.mobileImageUrl ? homeAdSizeError("mobile", a.mobileImageWidth ?? 0, a.mobileImageHeight ?? 0) : null);
+  if (err) throw badRequest(err);
+  if (a.startsAt && a.endsAt && a.endsAt <= a.startsAt) throw badRequest("End must be after start");
+}
+
+const homeAdCols = (b: Record<string, unknown>) => {
+  const cols = bannerCols(b);
+  if (cols.mobileImageUrl === null) Object.assign(cols, { mobileImageWidth: null, mobileImageHeight: null });
+  return cols as Partial<typeof homeAds.$inferInsert>;
+};
 
 // ─── Amenities ────────────────────────────────────────────────────────────────
 
@@ -475,6 +562,45 @@ export const adminCms = new Elysia({ name: "admin-cms" })
         { params: idParams },
       )
 
+      // ─── Home ad posters ──────────────────────────────────────────────────
+      .get("/home-ads", async () =>
+        (await db.select().from(homeAds).orderBy(asc(homeAds.afterSection), asc(homeAds.sort), desc(homeAds.createdAt))).map(toHomeAd),
+      )
+      .post(
+        "/home-ads",
+        async ({ authUser, body }) => {
+          const cols = homeAdCols(body);
+          assertHomeAdSizes(cols as typeof homeAds.$inferSelect);
+          const [row] = await db.insert(homeAds).values(cols as typeof homeAds.$inferInsert).returning();
+          await audit(authUser, "home_ad.create", "home_ad", row.id, body);
+          return toHomeAd(row);
+        },
+        { body: t.Object(homeAdFields) },
+      )
+      .patch(
+        "/home-ads/:id",
+        async ({ authUser, params, body }) => {
+          const existing = await db.query.homeAds.findFirst({ where: eq(homeAds.id, params.id) });
+          if (!existing) throw notFound("Ad poster");
+          const cols = homeAdCols(body);
+          assertHomeAdSizes({ ...existing, ...cols } as typeof homeAds.$inferSelect);
+          const [row] = await db.update(homeAds).set(cols).where(eq(homeAds.id, params.id)).returning();
+          await audit(authUser, "home_ad.update", "home_ad", row.id, body);
+          return toHomeAd(row);
+        },
+        { params: idParams, body: t.Partial(t.Object(homeAdFields)) },
+      )
+      .delete(
+        "/home-ads/:id",
+        async ({ authUser, params }) => {
+          const [row] = await db.delete(homeAds).where(eq(homeAds.id, params.id)).returning();
+          if (!row) throw notFound("Ad poster");
+          await audit(authUser, "home_ad.delete", "home_ad", row.id, { title: row.title });
+          return { ok: true };
+        },
+        { params: idParams },
+      )
+
       // ─── Amenities ────────────────────────────────────────────────────────
       .get("/amenities", async () =>
         (await db.select().from(amenities).orderBy(asc(amenities.sort), asc(amenities.name))).map((a) => ({
@@ -518,6 +644,45 @@ export const adminCms = new Elysia({ name: "admin-cms" })
           if (!row) throw notFound("Amenity");
           invalidateMetaCache();
           await audit(authUser, "amenity.delete", "amenity", row.id, { code: row.code });
+          return { ok: true };
+        },
+        { params: idParams },
+      )
+
+      // ─── Testimonials ───────────────────────────────────────────────────────
+      .get("/testimonials", async () =>
+        (await db.select().from(testimonials).orderBy(desc(testimonials.isFeatured), asc(testimonials.sort), desc(testimonials.createdAt))).map(toTestimonial),
+      )
+      .post(
+        "/testimonials",
+        async ({ authUser, body }) => {
+          await assertProperty(body.propertyId);
+          const [row] = await db.insert(testimonials).values(defined(body) as typeof testimonials.$inferInsert).returning();
+          invalidateMetaCache();
+          await audit(authUser, "testimonial.create", "testimonial", row.id, body);
+          return toTestimonial(row);
+        },
+        { body: t.Object(testimonialFields) },
+      )
+      .patch(
+        "/testimonials/:id",
+        async ({ authUser, params, body }) => {
+          if (body.propertyId) await assertProperty(body.propertyId);
+          const [row] = await db.update(testimonials).set(defined(body)).where(eq(testimonials.id, params.id)).returning();
+          if (!row) throw notFound("Testimonial");
+          invalidateMetaCache();
+          await audit(authUser, "testimonial.update", "testimonial", row.id, body);
+          return toTestimonial(row);
+        },
+        { params: idParams, body: t.Partial(t.Object(testimonialFields)) },
+      )
+      .delete(
+        "/testimonials/:id",
+        async ({ authUser, params }) => {
+          const [row] = await db.delete(testimonials).where(eq(testimonials.id, params.id)).returning();
+          if (!row) throw notFound("Testimonial");
+          invalidateMetaCache();
+          await audit(authUser, "testimonial.delete", "testimonial", row.id, { authorName: row.authorName });
           return { ok: true };
         },
         { params: idParams },
