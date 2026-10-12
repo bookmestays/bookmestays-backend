@@ -2,7 +2,7 @@
 import { and, count, desc, eq, ilike, ne, or } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { db } from "../../db";
-import { commissionRules, partners, properties, roomTypes } from "../../db/schema";
+import { commissionRules, media, partners, properties, roomTypes } from "../../db/schema";
 import { audit } from "../../lib/audit";
 import { ADMIN_ROLES, authPlugin } from "../../lib/auth";
 import { badRequest, conflict, notFound } from "../../lib/errors";
@@ -162,6 +162,13 @@ export const adminProperties = new Elysia({ name: "admin-properties" })
             case "APPROVE": {
               if (p.status === "LIVE") throw conflict("Property is already live");
               if (p.status === "SUSPENDED") throw conflict("Use UNSUSPEND to restore a suspended property");
+              // A property must have a walkthrough video before it can go live — our listings are video-first.
+              const [{ videos }] = await db
+                .select({ videos: count() })
+                .from(media)
+                .where(and(eq(media.ownerType, "PROPERTY"), eq(media.ownerId, p.id), eq(media.kind, "VIDEO")));
+              if (videos < 1)
+                throw conflict("This property has no video. Ask the partner to upload a walkthrough video before it can go live.");
               await db.transaction(async (tx) => {
                 // Room types submitted with the property are approved together with it.
                 await tx

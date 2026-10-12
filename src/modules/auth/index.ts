@@ -2,7 +2,7 @@ import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { env } from "../../config/env";
 import { db } from "../../db";
-import { otpCodes, users } from "../../db/schema";
+import { otpCodes, partners, users } from "../../db/schema";
 import {
   ACCESS_COOKIE,
   authPlugin,
@@ -16,8 +16,9 @@ import {
 } from "../../lib/auth";
 import { badRequest, conflict, unauthorized } from "../../lib/errors";
 import { otpEmail } from "../../lib/email-templates";
-import { sendEmail } from "../../lib/notify";
+import { notifyLater, sendEmail } from "../../lib/notify";
 import { sha256 } from "../../lib/utils";
+import { createUserWithTempPassword, linkPartnerUser, normalizePhone as normalizePhoneStrict } from "../../services/catalog/accounts";
 
 const ACCESS_MAX_AGE = 15 * 60;
 const REFRESH_MAX_AGE = env.refreshTokenTtlDays * 86_400;
@@ -114,6 +115,60 @@ export const authModule = new Elysia({ prefix: "/auth", tags: ["Auth"] })
         name: t.String({ minLength: 2, maxLength: 160 }),
         email: t.String({ format: "email" }),
         phone: t.Optional(t.String({ minLength: 10, maxLength: 15 })),
+        password: t.String({ minLength: 8 }),
+      }),
+    },
+  )
+
+  // Partner self-signup. Creates the owner login + the partner business in one step and
+  // signs them in. The business starts ACTIVE with KYC PENDING and platform defaults for
+  // commission/settlement; an admin reviews KYC and each property before it goes live.
+  .post(
+    "/partner/register",
+    async ({ body, cookie, headers, server, request, startSession }) => {
+      const businessName = body.businessName.trim();
+      const contactName = body.contactName.trim();
+      const result = await db.transaction(async (tx) => {
+        const { user } = await createUserWithTempPassword(tx, {
+          name: contactName,
+          email: body.email,
+          phone: body.phone,
+          role: "PARTNER_OWNER",
+          password: body.password, // chosen now → no forced password change
+        });
+        const [partner] = await tx
+          .insert(partners)
+          .values({
+            legalName: businessName,
+            displayName: businessName,
+            contactName,
+            email: body.email.trim().toLowerCase(),
+            phone: normalizePhoneStrict(body.phone),
+            createdBy: user.id,
+          })
+          .returning();
+        await linkPartnerUser(tx, partner.id, user.id);
+        return { user, partner };
+      });
+      notifyLater(
+        sendEmail({
+          to: result.user.email!,
+          subject: "Welcome to BookMeStays — your partner account",
+          text: `Hi ${contactName},\n\n${businessName} is now registered on BookMeStays.\n\nSign in to the partner panel: ${env.webUrl.replace("://", "://partner.")}\n\nNext steps: add your property, upload photos and a walkthrough video, set up rooms and rates, then submit it for review. Our team approves each property before it goes live.\n\n— Team BookMeStays`,
+          html: `<p>Hi ${contactName},</p><p><b>${businessName}</b> is now registered on BookMeStays.</p><p>Next steps: add your property, upload photos and a <b>walkthrough video</b>, set up rooms and rates, then submit it for review. Our team approves each property before it goes live.</p><p>— Team BookMeStays</p>`,
+        }),
+      );
+      return startSession(result.user.id, cookie, {
+        userAgent: headers["user-agent"],
+        ip: server?.requestIP(request)?.address,
+      });
+    },
+    {
+      body: t.Object({
+        businessName: t.String({ minLength: 2, maxLength: 200 }),
+        contactName: t.String({ minLength: 2, maxLength: 160 }),
+        email: t.String({ format: "email", maxLength: 255 }),
+        phone: t.String({ minLength: 10, maxLength: 15 }),
         password: t.String({ minLength: 8 }),
       }),
     },

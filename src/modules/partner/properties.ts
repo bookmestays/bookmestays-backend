@@ -197,20 +197,24 @@ export const partnerProperties = new Elysia({ name: "partner-properties" })
       const p = await ownProperty(partnerId, params.id);
       if (p.status !== "DRAFT" && p.status !== "REJECTED")
         throw conflict(p.status === "PENDING_REVIEW" ? "Property is already under review" : "Property is already published");
-      const [[rtWithPlan], [{ images }]] = await Promise.all([
+      const [[rtWithPlan], [{ images, videos }]] = await Promise.all([
         db
           .select({ n: sql<number>`count(DISTINCT ${roomTypes.id})`.mapWith(Number) })
           .from(roomTypes)
           .innerJoin(ratePlans, and(eq(ratePlans.roomTypeId, roomTypes.id), eq(ratePlans.isActive, true)))
           .where(and(eq(roomTypes.propertyId, p.id), ne(roomTypes.status, "INACTIVE"))),
         db
-          .select({ images: count() })
+          .select({
+            images: sql<number>`count(*) FILTER (WHERE ${media.kind} = 'IMAGE')`.mapWith(Number),
+            videos: sql<number>`count(*) FILTER (WHERE ${media.kind} = 'VIDEO')`.mapWith(Number),
+          })
           .from(media)
-          .where(and(eq(media.ownerType, "PROPERTY"), eq(media.ownerId, p.id), eq(media.kind, "IMAGE"))),
+          .where(and(eq(media.ownerType, "PROPERTY"), eq(media.ownerId, p.id))),
       ]);
       const missing: { field: string; message: string }[] = [];
       if (!rtWithPlan?.n) missing.push({ field: "roomTypes", message: "Add at least one room type with a rate plan" });
       if (images < 3) missing.push({ field: "media", message: `Upload at least 3 property photos (${images} so far)` });
+      if (videos < 1) missing.push({ field: "media", message: "Upload at least one property video (a walkthrough or tour clip)" });
       if (!p.address?.trim()) missing.push({ field: "address", message: "Add the property address" });
       if (!p.cityId) missing.push({ field: "cityId", message: "Choose the city" });
       if (!p.cancellationPolicy) missing.push({ field: "cancellationPolicy", message: "Set a cancellation policy" });
