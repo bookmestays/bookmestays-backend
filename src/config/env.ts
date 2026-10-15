@@ -69,7 +69,8 @@ export const env = {
     EZEE: channelManager("EZEE"),
     STAAH: channelManager("STAAH"),
     SITEMINDER: channelManager("SITEMINDER"),
+    ASIATECH: channelManager("ASIATECH"),
   },
 };
 
-export type ChannelManagerProvider = "AXISROOMS" | "EZEE" | "STAAH" | "SITEMINDER";
+export type ChannelManagerProvider = "AXISROOMS" | "EZEE" | "STAAH" | "SITEMINDER" | "ASIATECH";

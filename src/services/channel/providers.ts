@@ -62,6 +62,17 @@ class SiteMinderAdapter extends OtaChannelAdapter {
   }
 }
 
+/** AsiaTech — OTA XML channel connectivity. */
+class AsiaTechAdapter extends OtaChannelAdapter {
+  constructor() {
+    super("ASIATECH", "AsiaTech", "asiatech");
+  }
+  // QUIRKS (fill in from AsiaTech channel-partner docs):
+  //  • Outbound auth: confirm whether they want HTTP Basic, an API key header or credentials in <POS>.
+  //  • Confirm whether cancellations must be sent as OTA_CancelRQ instead of ResStatus="Cancel".
+  //  • Confirm date-range limits per message and whether they send BookingLimit or InvCountNotif for inventory.
+}
+
 const escapeXml = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
@@ -70,6 +81,7 @@ export const ADAPTERS: Record<Provider, ChannelAdapter> = {
   EZEE: new EzeeAdapter(),
   STAAH: new StaahAdapter(),
   SITEMINDER: new SiteMinderAdapter(),
+  ASIATECH: new AsiaTechAdapter(),
 };
 
 export const PROVIDERS = Object.keys(ADAPTERS) as Provider[];

@@ -159,7 +159,7 @@ export const homeSectionType = pgEnum("home_section_type", [
   "TESTIMONIALS", // guest testimonials carousel (replaces WHY_BOOKMESTAYS)
 ]);
 
-export const channelProvider = pgEnum("channel_provider", ["AXISROOMS", "EZEE", "STAAH", "SITEMINDER"]);
+export const channelProvider = pgEnum("channel_provider", ["AXISROOMS", "EZEE", "STAAH", "SITEMINDER", "ASIATECH"]);
 export const channelConnectionStatus = pgEnum("channel_connection_status", [
   "PENDING", // requested, waiting for mapping / CM activation
   "ACTIVE",
