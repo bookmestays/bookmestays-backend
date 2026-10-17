@@ -205,6 +205,10 @@ async function seedSettings() {
         key: "support",
         value: { phone: "+91 00000 00000", email: "bookmestaysupport@gmail.com", whatsapp: "", social: {} },
       },
+      {
+        key: "notice",
+        value: { enabled: false, text: "", speed: "normal" },
+      },
     ])
     .onConflictDoNothing({ target: siteSettings.key });
   console.log("• settings");

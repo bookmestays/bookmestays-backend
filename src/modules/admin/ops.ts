@@ -155,6 +155,12 @@ const SETTINGS_SCHEMAS = {
     whatsapp: t.Optional(t.String({ maxLength: 40 })),
     social: t.Optional(t.Record(t.String(), t.String())),
   }),
+  // Scrolling notice/announcement shown as a marquee below the site header on every page.
+  notice: t.Object({
+    enabled: t.Optional(t.Boolean()),
+    text: t.Optional(t.String({ maxLength: 500 })),
+    speed: t.Optional(t.Union([t.Literal("slow"), t.Literal("normal"), t.Literal("fast")])),
+  }),
 };
 type SettingKey = keyof typeof SETTINGS_SCHEMAS;
 const SETTING_KEYS = Object.keys(SETTINGS_SCHEMAS) as SettingKey[];
@@ -168,7 +174,7 @@ async function saveSetting(actor: Parameters<typeof audit>[0], key: SettingKey, 
     .onConflictDoUpdate({ target: siteSettings.key, set: { value: merged, updatedAt: new Date() } })
     .returning();
   invalidateSettingCache(key);
-  if (key === "support") invalidateMetaCache();
+  if (key === "support" || key === "notice") invalidateMetaCache();
   await audit(actor, "settings.update", "setting", key, value);
   return { key, value: row.value, updatedAt: iso(row.updatedAt) };
 }
@@ -402,6 +408,9 @@ export const adminOps = new Elysia({ name: "admin-ops" })
       })
       .put("/settings/support", ({ authUser, body }) => saveSetting(authUser, "support", body), {
         body: SETTINGS_SCHEMAS.support,
+      })
+      .put("/settings/notice", ({ authUser, body }) => saveSetting(authUser, "notice", body), {
+        body: SETTINGS_SCHEMAS.notice,
       })
       // Saving tier targets immediately re-evaluates every property against the new rules.
       .put(

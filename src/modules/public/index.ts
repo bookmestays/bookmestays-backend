@@ -50,12 +50,16 @@ const escapeLike = (s: string) => s.replace(/[%_\\]/g, (m) => `\\${m}`);
 let metaCache: { at: number; value: unknown } | null = null;
 async function siteMeta() {
   if (metaCache && Date.now() - metaCache.at < 5 * 60_000) return metaCache.value;
-  const [cityRows, amenityRows, support] = await Promise.all([
+  const [cityRows, amenityRows, support, notice] = await Promise.all([
     db.select().from(cities).where(eq(cities.isActive, true)).orderBy(asc(cities.sort), asc(cities.name)),
     db.select().from(amenities).orderBy(asc(amenities.sort), asc(amenities.name)),
     db.query.siteSettings.findFirst({ where: eq(siteSettings.key, "support") }),
+    db.query.siteSettings.findFirst({ where: eq(siteSettings.key, "notice") }),
   ]);
   const s = (support?.value ?? {}) as Record<string, unknown>;
+  const n = (notice?.value ?? {}) as Record<string, unknown>;
+  const noticeText = String(n.text ?? "").trim();
+  const noticeSpeed = n.speed === "slow" || n.speed === "fast" ? n.speed : "normal";
   const value = {
     cities: cityRows.map(toCityLite),
     propertyTypes: PROPERTY_TYPES.map((v) => ({ value: v, label: PROPERTY_TYPE_LABELS[v] })),
@@ -66,6 +70,12 @@ async function siteMeta() {
       email: String(s.email ?? ""),
       whatsapp: String(s.whatsapp ?? ""),
       social: (s.social && typeof s.social === "object" ? s.social : {}) as Record<string, string>,
+    },
+    // Only surface the marquee when an admin has enabled it AND entered text.
+    notice: {
+      enabled: n.enabled === true && noticeText.length > 0,
+      text: noticeText,
+      speed: noticeSpeed as "slow" | "normal" | "fast",
     },
   };
   metaCache = { at: Date.now(), value };

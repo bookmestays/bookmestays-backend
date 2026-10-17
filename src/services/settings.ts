@@ -26,6 +26,9 @@ export type RankingSettings = { mode: "MOST_BOOKED_FIRST" | "PINS_FIRST" };
 export type TierRule = { enabled: boolean; windowDays: number; minBookings: number };
 export type TierSettings = { gold: TierRule; rising: TierRule };
 
+/** Scrolling announcement shown as a marquee below the header on every public page. */
+export type NoticeSettings = { enabled: boolean; text: string; speed: "slow" | "normal" | "fast" };
+
 const DEFAULT_TAX: TaxSettings = {
   roomGstSlabs: [
     { upToPerNight: 750000, rateBps: 500 },
@@ -41,6 +44,7 @@ const DEFAULT_TIERS: TierSettings = {
   gold: { enabled: true, windowDays: 7, minBookings: 12 },
   rising: { enabled: true, windowDays: 7, minBookings: 15 },
 };
+const DEFAULT_NOTICE: NoticeSettings = { enabled: false, text: "", speed: "normal" };
 
 const TTL_MS = 30_000;
 const cache = new Map<string, { value: unknown; at: number }>();
@@ -61,3 +65,4 @@ export const getTaxSettings = () => getSetting("tax", DEFAULT_TAX);
 export const getBookingSettings = () => getSetting("booking", DEFAULT_BOOKING);
 export const getRankingSettings = () => getSetting("ranking", DEFAULT_RANKING);
 export const getTierSettings = () => getSetting("tiers", DEFAULT_TIERS);
+export const getNoticeSettings = () => getSetting("notice", DEFAULT_NOTICE);
