@@ -27,7 +27,7 @@ import {
 } from "../../services/bookings/modify";
 import { bookingModifications } from "../../db/schema";
 import { buildQuote } from "../../services/pricing";
-import { isMockPayments, verifyPaymentSignature } from "../../services/razorpay";
+import { verifyPaymentSignature } from "../../services/razorpay";
 
 export const dateStr = t.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" });
 const uuid = t.String({ format: "uuid" });
@@ -102,10 +102,14 @@ export const guestBookingsModule = new Elysia({ prefix: "/bookings", tags: ["Boo
       if (!payment) throw notFound("Payment");
       if (!verifyPaymentSignature(body.razorpayOrderId, body.razorpayPaymentId, body.razorpaySignature))
         throw new AppError(400, "INVALID_SIGNATURE", "We could not verify this payment. If money was debited it will be refunded automatically.");
+      // The checkout signature above already proves the payment succeeded, and orders are created
+      // with payment_capture=1 (auto-capture), so we confirm the booking right away instead of
+      // blocking the guest on an extra synchronous Razorpay round-trip. The webhook
+      // (payment.captured / order.paid) reconciles capture status and method afterwards.
       const { booking, outcome } = await confirmPayment({
         orderId: body.razorpayOrderId,
         paymentId: body.razorpayPaymentId,
-        verifyWithGateway: !isMockPayments(),
+        verifyWithGateway: false,
       });
       if (outcome === "REFUND_REQUIRED")
         throw new AppError(
@@ -263,7 +267,7 @@ export const guestBookingsModule = new Elysia({ prefix: "/bookings", tags: ["Boo
       const r = await confirmModificationPayment({
         orderId: body.razorpayOrderId,
         paymentId: body.razorpayPaymentId,
-        verifyWithGateway: !isMockPayments(),
+        verifyWithGateway: false,
       });
       if (r.outcome === "REFUNDED")
         throw new AppError(

@@ -374,7 +374,9 @@ export async function confirmPayment(p: {
   });
 
   if (result.outcome === "CONFIRMED") {
-    await recordRouteTransfer(pre.id).catch((err) => console.error("route transfer record failed", err));
+    // Recording the Route transfer hits Razorpay, so keep it off the guest's critical path —
+    // the transfer webhook (transfer.*) and admin settlement both reconcile it if this is slow.
+    notifyLater(recordRouteTransfer(pre.id));
     refreshTiersFor(result.booking.propertyId);
     notifyLater(sendConfirmationEmails(result.booking));
     notifyLater(queueReservationPush(result.booking.id, "NEW"));
