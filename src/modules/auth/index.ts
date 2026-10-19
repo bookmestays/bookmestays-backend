@@ -88,16 +88,79 @@ export const authModule = new Elysia({ prefix: "/auth", tags: ["Auth"] })
     },
   )
 
-  // Customer signup with password
+  // Customer signup with password — step 1 of 2: validate and email a verification code.
+  // No user is created until the code is confirmed at /register/verify, so an unverified
+  // email never ends up with an account.
   .post(
     "/register",
-    async ({ body, cookie, headers, startSession }) => {
+    async ({ body }) => {
       const email = body.email.trim().toLowerCase();
       const phone = body.phone ? normalizePhone(body.phone) : null;
       const existing = await db.query.users.findFirst({
         where: or(sql`lower(${users.email}) = ${email}`, phone ? eq(users.phone, phone) : undefined),
       });
       if (existing) throw conflict("An account with this email or phone already exists");
+      const recent = await db.query.otpCodes.findFirst({
+        where: and(
+          eq(otpCodes.target, email),
+          eq(otpCodes.purpose, "VERIFY"),
+          gt(otpCodes.createdAt, new Date(Date.now() - 30_000)),
+        ),
+      });
+      if (recent) throw badRequest("Please wait 30 seconds before requesting another code");
+      const code = String(Math.floor(100000 + Math.random() * 900000));
+      await db.insert(otpCodes).values({
+        target: email,
+        codeHash: sha256(code),
+        purpose: "VERIFY",
+        expiresAt: new Date(Date.now() + OTP_TTL_MINUTES * 60_000),
+      });
+      try {
+        await sendEmail({ to: email, ...otpEmail({ code, minutes: OTP_TTL_MINUTES }) });
+      } catch (err) {
+        console.error("Verification email failed:", err);
+        throw badRequest("Couldn't send the code to this email. Please try again");
+      }
+      return { verify: true, email };
+    },
+    {
+      body: t.Object({
+        name: t.String({ minLength: 2, maxLength: 160 }),
+        email: t.String({ format: "email" }),
+        phone: t.Optional(t.String({ minLength: 10, maxLength: 15 })),
+        password: t.String({ minLength: 8 }),
+      }),
+    },
+  )
+
+  // Customer signup — step 2 of 2: confirm the emailed code, then create the verified account.
+  .post(
+    "/register/verify",
+    async ({ body, cookie, headers, startSession }) => {
+      const email = body.email.trim().toLowerCase();
+      const phone = body.phone ? normalizePhone(body.phone) : null;
+      const otp = await db.query.otpCodes.findFirst({
+        where: and(
+          eq(otpCodes.target, email),
+          eq(otpCodes.purpose, "VERIFY"),
+          isNull(otpCodes.consumedAt),
+          gt(otpCodes.expiresAt, new Date()),
+        ),
+        orderBy: desc(otpCodes.createdAt),
+      });
+      if (!otp || otp.attempts >= 5) throw unauthorized("Code expired. Please request a new one");
+      if (otp.codeHash !== sha256(body.code)) {
+        await db.update(otpCodes).set({ attempts: otp.attempts + 1 }).where(eq(otpCodes.id, otp.id));
+        throw unauthorized("Incorrect code");
+      }
+      await db.update(otpCodes).set({ consumedAt: new Date() }).where(eq(otpCodes.id, otp.id));
+
+      // Re-check uniqueness: the email/phone may have been claimed between request and verify.
+      const existing = await db.query.users.findFirst({
+        where: or(sql`lower(${users.email}) = ${email}`, phone ? eq(users.phone, phone) : undefined),
+      });
+      if (existing) throw conflict("An account with this email or phone already exists");
+
       const [user] = await db
         .insert(users)
         .values({
@@ -106,6 +169,7 @@ export const authModule = new Elysia({ prefix: "/auth", tags: ["Auth"] })
           phone,
           passwordHash: await Bun.password.hash(body.password),
           role: "CUSTOMER",
+          emailVerified: true,
         })
         .returning();
       return startSession(user.id, cookie, { userAgent: headers["user-agent"] });
@@ -116,6 +180,7 @@ export const authModule = new Elysia({ prefix: "/auth", tags: ["Auth"] })
         email: t.String({ format: "email" }),
         phone: t.Optional(t.String({ minLength: 10, maxLength: 15 })),
         password: t.String({ minLength: 8 }),
+        code: t.String({ minLength: 6, maxLength: 6 }),
       }),
     },
   )
