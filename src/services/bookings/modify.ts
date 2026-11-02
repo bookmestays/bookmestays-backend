@@ -335,7 +335,7 @@ async function createModificationPayment(b: BookingRow, mod: ModificationRow) {
   const payoutIncrease = mod.quote.partnerPayout - b.partnerPayout;
   const due = settlementDueDate(partner, mod.checkOut);
   const transfer: RouteTransfer | null =
-    env.razorpay.routeEnabled && partner.razorpayLinkedAccountId && payoutIncrease > 0
+    env.razorpay.routeEnabled && partner.razorpayLinkedAccountId && partner.payoutsActivatedAt && payoutIncrease > 0
       ? {
           account: partner.razorpayLinkedAccountId,
           amount: Math.min(payoutIncrease, mod.difference),

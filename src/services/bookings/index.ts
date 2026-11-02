@@ -125,7 +125,7 @@ async function createPaymentForBooking(b: BookingRow) {
   const [partner] = await db.select().from(partners).where(eq(partners.id, b.partnerId));
   const due = settlementDueDate(partner, b.checkOut);
   const transfer: RouteTransfer | null =
-    env.razorpay.routeEnabled && partner.razorpayLinkedAccountId && b.partnerPayout > 0
+    env.razorpay.routeEnabled && partner.razorpayLinkedAccountId && partner.payoutsActivatedAt && b.partnerPayout > 0
       ? {
           account: partner.razorpayLinkedAccountId,
           amount: Math.min(b.partnerPayout, b.totalAmount),

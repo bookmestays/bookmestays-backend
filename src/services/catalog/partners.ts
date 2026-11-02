@@ -8,6 +8,32 @@ import { buildAdminPropertyRows } from "./property-detail";
 
 type PartnerRow = typeof partners.$inferSelect;
 
+/**
+ * Partner's payout-onboarding stage, derived from their KYC + bank details + Route linked account.
+ *   DETAILS_INCOMPLETE → add PAN + bank account/IFSC in the profile
+ *   KYC_REJECTED       → admin rejected the submitted details
+ *   KYC_PENDING        → details submitted, awaiting admin KYC verification
+ *   READY_TO_SETUP     → KYC verified; partner can create the Route linked account
+ *   PENDING_ACTIVATION → linked account created, awaiting admin activation
+ *   ACTIVE             → activated; payouts route through Razorpay Route
+ */
+export type PayoutStatus =
+  | "DETAILS_INCOMPLETE"
+  | "KYC_REJECTED"
+  | "KYC_PENDING"
+  | "READY_TO_SETUP"
+  | "PENDING_ACTIVATION"
+  | "ACTIVE";
+
+export function payoutStatusOf(p: PartnerRow): PayoutStatus {
+  if (p.razorpayLinkedAccountId) return p.payoutsActivatedAt ? "ACTIVE" : "PENDING_ACTIVATION";
+  const hasBank = !!(p.bankAccountNumberEnc && p.bankIfsc && p.bankAccountName);
+  if (!hasBank || !p.pan) return "DETAILS_INCOMPLETE";
+  if (p.kycStatus === "REJECTED") return "KYC_REJECTED";
+  if (p.kycStatus !== "VERIFIED") return "KYC_PENDING";
+  return "READY_TO_SETUP";
+}
+
 export async function buildPartnerSummaries(rows: PartnerRow[]) {
   if (!rows.length) return [];
   const counts = await db
@@ -82,6 +108,9 @@ export async function partnerProfile(partnerId: string) {
     bankAccountLast4: p.bankAccountLast4,
     bankIfsc: p.bankIfsc,
     kycNotes: p.kycNotes,
+    payoutStatus: payoutStatusOf(p),
+    payoutsActivatedAt: iso(p.payoutsActivatedAt),
+    hasLinkedAccount: !!p.razorpayLinkedAccountId,
     settlementDayOfWeek: p.settlementDayOfWeek,
     settlementDayOfMonth: p.settlementDayOfMonth,
     settlementDelayDays: p.settlementDelayDays,

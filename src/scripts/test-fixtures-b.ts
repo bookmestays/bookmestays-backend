@@ -55,6 +55,7 @@ if (!partner)
       bankIfsc: "HDFC0000001",
       kycStatus: "VERIFIED",
       razorpayLinkedAccountId: "acc_mock_testb",
+      payoutsActivatedAt: new Date(),
       settlementCycle: "AFTER_CHECKOUT",
       settlementDelayDays: 0,
       defaultCommissionType: "PERCENT",

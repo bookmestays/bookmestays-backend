@@ -8,7 +8,7 @@ import { audit } from "../../lib/audit";
 import { ADMIN_ROLES, authPlugin } from "../../lib/auth";
 import { badRequest, notFound } from "../../lib/errors";
 import { notifyLater, sendEmail } from "../../lib/notify";
-import { encrypt, pageParams, paginated, randomPassword } from "../../lib/utils";
+import { decrypt, encrypt, pageParams, paginated, randomPassword } from "../../lib/utils";
 import { publicUser } from "../auth";
 import { createPropertyShell, createUserWithTempPassword, linkPartnerUser } from "../../services/catalog/accounts";
 import {
@@ -278,6 +278,8 @@ export const adminPartners = new Elysia({ name: "admin-partners" })
             .orderBy(properties.createdAt)
             .limit(1);
           const accountId = await createLinkedAccount(partner, firstProperty ?? {}, body ?? {});
+          // Admin-created accounts are activated immediately (the admin is the one confirming).
+          await db.update(partners).set({ payoutsActivatedAt: new Date() }).where(eq(partners.id, params.id));
           await audit(authUser, "partner.linked_account", "partner", params.id, { accountId });
           return partnerDetail(params.id);
         },
@@ -296,6 +298,45 @@ export const adminPartners = new Elysia({ name: "admin-partners" })
             }),
           ),
         },
+      )
+
+      // Activate / deactivate payouts for a partner-created Route linked account.
+      // Transfers and settlements route to the account only while it is activated.
+      .post(
+        "/partners/:id/payouts",
+        async ({ authUser, params, body }) => {
+          const partner = await loadPartner(params.id);
+          if (body.active && !partner.razorpayLinkedAccountId)
+            throw badRequest("Create the Razorpay linked account before activating payouts");
+          await db
+            .update(partners)
+            .set({ payoutsActivatedAt: body.active ? new Date() : null })
+            .where(eq(partners.id, params.id));
+          await audit(authUser, body.active ? "partner.payouts_activate" : "partner.payouts_deactivate", "partner", params.id, {});
+          return partnerDetail(params.id);
+        },
+        {
+          params: t.Object({ id: t.String({ format: "uuid" }) }),
+          body: t.Object({ active: t.Boolean() }),
+        },
+      )
+
+      // Reveal the partner's full bank account number for a manual bank transfer (NEFT/IMPS).
+      // Decrypts on demand and audits every access — the number is never kept in list/detail DTOs.
+      .get(
+        "/partners/:id/bank-account",
+        async ({ authUser, params }) => {
+          const partner = await loadPartner(params.id);
+          if (!partner.bankAccountNumberEnc) throw notFound("Bank account");
+          await audit(authUser, "partner.bank_reveal", "partner", params.id, {});
+          return {
+            accountName: partner.bankAccountName,
+            accountNumber: decrypt(partner.bankAccountNumberEnc),
+            ifsc: partner.bankIfsc,
+            last4: partner.bankAccountLast4,
+          };
+        },
+        { params: t.Object({ id: t.String({ format: "uuid" }) }) },
       )
 
       // ─── Commission rules ─────────────────────────────────────────────────

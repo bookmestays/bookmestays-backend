@@ -259,6 +259,9 @@ export const partners = pgTable(
     razorpayLinkedAccountId: varchar("razorpay_linked_account_id", { length: 64 }),
     razorpayxContactId: varchar("razorpayx_contact_id", { length: 64 }),
     razorpayxFundAccountId: varchar("razorpayx_fund_account_id", { length: 64 }),
+    // Route transfers/settlements route to the linked account only after an admin activates it.
+    // null = created but not yet activated (or no linked account). Set on admin-created accounts.
+    payoutsActivatedAt: timestamp("payouts_activated_at", { withTimezone: true }),
     // Settlement settings — set by admin when creating the partner
     settlementCycle: settlementCycle("settlement_cycle").notNull().default("WEEKLY"),
     settlementDayOfWeek: integer("settlement_day_of_week").default(1), // 0=Sun … 6=Sat

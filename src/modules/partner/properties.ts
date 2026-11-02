@@ -2,13 +2,14 @@
 import { and, count, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { db } from "../../db";
-import { bookings, media, nearbyPlaces, partners, properties, ratePlans, roomTypes } from "../../db/schema";
+import { bookings, cities, media, nearbyPlaces, partners, properties, ratePlans, roomTypes } from "../../db/schema";
 import { audit } from "../../lib/audit";
 import { authPlugin } from "../../lib/auth";
 import { conflict, forbidden, notFound, unprocessable } from "../../lib/errors";
 import { encrypt } from "../../lib/utils";
 import { createPropertyShell } from "../../services/catalog/accounts";
 import { partnerProfile } from "../../services/catalog/partners";
+import { createLinkedAccount } from "../../services/catalog/razorpay-route";
 import {
   buildPartnerPropertyRows,
   loadNearby,
@@ -78,6 +79,31 @@ export const partnerProperties = new Elysia({ name: "partner-properties" })
         bankIfsc: t.Optional(t.Nullable(t.String({ pattern: "^[A-Za-z]{4}0[A-Za-z0-9]{6}$" }))),
       }),
     },
+  )
+
+  // Partner self-serve payout onboarding: create the Razorpay Route linked account.
+  // Gated on admin-verified KYC; the account stays inactive until an admin activates it.
+  .post(
+    "/me/linked-account",
+    async ({ authUser, partnerId }) => {
+      if (authUser.role !== "PARTNER_OWNER") throw forbidden("Only the account owner can set up payouts");
+      const partner = await db.query.partners.findFirst({ where: eq(partners.id, partnerId) });
+      if (!partner) throw notFound("Partner");
+      if (partner.razorpayLinkedAccountId) return partnerProfile(partnerId); // already created — idempotent
+      if (partner.kycStatus !== "VERIFIED")
+        throw unprocessable("Your KYC has to be verified by BookMeStays before you can set up payouts");
+      const [firstProperty] = await db
+        .select({ city: cities.name, state: cities.state, pincode: properties.pincode })
+        .from(properties)
+        .leftJoin(cities, eq(cities.id, properties.cityId))
+        .where(eq(properties.partnerId, partnerId))
+        .orderBy(properties.createdAt)
+        .limit(1);
+      const accountId = await createLinkedAccount(partner, firstProperty ?? {});
+      await audit(authUser, "partner.linked_account", "partner", partnerId, { accountId, self: true });
+      return partnerProfile(partnerId);
+    },
+    { partner: true },
   )
 
   // ─── Properties ─────────────────────────────────────────────────────────────
