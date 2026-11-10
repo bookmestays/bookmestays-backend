@@ -86,6 +86,7 @@ const experienceFields = {
   hostInfo: t.Optional(nstr(5000)),
   availabilityNote: t.Optional(nstr(2000)),
   isBookable: t.Optional(t.Boolean()),
+  isComingSoon: t.Optional(t.Boolean()),
   isActive: t.Optional(t.Boolean()),
   coverImageUrl: t.Optional(nstr(2000)),
   sort: t.Optional(t.Integer()),

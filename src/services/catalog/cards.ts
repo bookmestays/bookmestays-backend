@@ -158,6 +158,7 @@ export async function buildExperienceCards(rows: ExperienceRow[]) {
       ratingAvg: e.ratingAvg,
       ratingCount: e.ratingCount,
       isBookable: e.isBookable,
+      isComingSoon: e.isComingSoon,
     };
   });
 }

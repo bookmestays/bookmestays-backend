@@ -640,6 +640,9 @@ export const experiences = pgTable(
     hostInfo: text("host_info"),
     availabilityNote: text("availability_note"),
     isBookable: boolean("is_bookable").notNull().default(false), // V1: display only
+    // "Coming soon": listed with full details but not yet available. Shown with a "Coming soon"
+    // state instead of the usual availability/booking messaging.
+    isComingSoon: boolean("is_coming_soon").notNull().default(false),
     isActive: boolean("is_active").notNull().default(true),
     coverImageUrl: text("cover_image_url"),
     ratingAvg: doublePrecision("rating_avg").notNull().default(0),
