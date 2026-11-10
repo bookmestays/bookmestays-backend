@@ -24,7 +24,7 @@ import {
   type CancellationPolicy,
 } from "../db/schema";
 import { AppError, notFound, unprocessable } from "../lib/errors";
-import { applyBps, diffDays, nightsBetween, todayIST } from "../lib/utils";
+import { applyBps, diffDays, nightsBetween, todayIST, weekdayKey } from "../lib/utils";
 import { getBookingSettings, getTaxSettings, type TaxSettings } from "./settings";
 
 export type Exec = typeof db | Tx;
@@ -152,10 +152,20 @@ export function availableRooms(ctx: PricingContext, rt: RoomTypeRow): number {
   return Math.min(...ctx.nights.map((d) => availableOf(inventoryDay(ctx, rt, d))));
 }
 
+/** The plan's recurring weekday/weekend override for this date, or null to fall back to basePrice. */
+export function weekdayPriceOf(rp: RatePlanRow, date: string): number | null {
+  const price = rp.weekdayPrices?.[weekdayKey(date)];
+  return typeof price === "number" ? price : null;
+}
+
+/**
+ * Nightly rate + restrictions for one plan on one date. Resolution order:
+ *  explicit per-date `rates` row  →  recurring weekday/weekend price  →  plan basePrice.
+ */
 export function rateDay(ctx: PricingContext, rp: RatePlanRow, date: string): RateDay {
   return (
     ctx.rates.get(rp.id)?.get(date) ?? {
-      price: rp.basePrice,
+      price: weekdayPriceOf(rp, date) ?? rp.basePrice,
       minStay: 1,
       maxStay: null,
       closedToArrival: false,

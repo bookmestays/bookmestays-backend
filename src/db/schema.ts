@@ -237,6 +237,20 @@ export type CancellationPolicy = {
   rules: { hoursBeforeCheckIn: number; refundPercent: number }[];
 };
 
+// Per-weekday nightly price overrides (stored as jsonb on a rate plan, paise).
+// Keys are lowercase day-of-week; a missing/null day falls back to the plan's basePrice.
+// Lets partners price weekdays (mon–fri) and weekends (sat–sun) differently without
+// painting the calendar. Explicit per-date `rates` rows still take precedence.
+export type WeekdayPrices = {
+  sun?: number | null;
+  mon?: number | null;
+  tue?: number | null;
+  wed?: number | null;
+  thu?: number | null;
+  fri?: number | null;
+  sat?: number | null;
+};
+
 export const partners = pgTable(
   "partners",
   {
@@ -498,6 +512,8 @@ export const ratePlans = pgTable(
     cancellationPolicy: jsonb("cancellation_policy").$type<CancellationPolicy>(),
     // Default nightly price for this plan; per-date prices live in `rates`
     basePrice: money("base_price").notNull(),
+    // Recurring weekday/weekend price overrides (paise per weekday); null/absent day → basePrice.
+    weekdayPrices: jsonb("weekday_prices").$type<WeekdayPrices>(),
     extraAdultPrice: money("extra_adult_price").notNull().default(0),
     extraChildPrice: money("extra_child_price").notNull().default(0),
     isActive: boolean("is_active").notNull().default(true),

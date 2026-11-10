@@ -3,8 +3,9 @@
 // instead of deleted so booking history keeps its references. Callers audit-log.
 import { and, count, eq, sql } from "drizzle-orm";
 import { db } from "../../db";
-import { bookingRooms, media, ratePlans, roomTypes } from "../../db/schema";
+import { bookingRooms, media, ratePlans, roomTypes, type WeekdayPrices } from "../../db/schema";
 import { badRequest } from "../../lib/errors";
+import { WEEKDAY_KEYS } from "../../lib/utils";
 import { defined } from "../../modules/admin/schemas";
 import { recomputeStartingPrice } from "./maintenance";
 import { normalizeOccupancy, setRoomTypeAmenities } from "./property-ops";
@@ -31,6 +32,22 @@ export type RoomTypeInput = {
   ratePlans?: RatePlanInput[];
 };
 
+/**
+ * Keeps only valid numeric weekday overrides and collapses an all-empty map to null,
+ * so the stored jsonb holds just the days the partner actually priced.
+ */
+function normalizeRatePlanInput<T extends { weekdayPrices?: WeekdayPrices | null }>(body: T): T {
+  if (!("weekdayPrices" in body) || body.weekdayPrices === undefined) return body;
+  const src = body.weekdayPrices;
+  if (!src) return { ...body, weekdayPrices: null };
+  const out: WeekdayPrices = {};
+  for (const k of WEEKDAY_KEYS) {
+    const v = src[k];
+    if (typeof v === "number" && v >= 0) out[k] = Math.round(v);
+  }
+  return { ...body, weekdayPrices: Object.keys(out).length ? out : null };
+}
+
 export async function createRoomType(propertyId: string, body: RoomTypeInput, status: RoomTypeStatus) {
   const occupancy = normalizeOccupancy(body);
   const { amenityIds, ratePlans: plans, ...fields } = body;
@@ -41,7 +58,9 @@ export async function createRoomType(propertyId: string, body: RoomTypeInput, st
       .returning();
     if (amenityIds) await setRoomTypeAmenities(row.id, amenityIds, tx);
     if (plans?.length)
-      await tx.insert(ratePlans).values(plans.map((plan, i) => ({ sort: i, ...defined(plan), roomTypeId: row.id })));
+      await tx
+        .insert(ratePlans)
+        .values(plans.map((plan, i) => ({ sort: i, ...defined(normalizeRatePlanInput(plan)), roomTypeId: row.id })));
     if (status === "ACTIVE") await recomputeStartingPrice(propertyId, tx);
     return row;
   });
@@ -103,7 +122,7 @@ export async function createRatePlan(rt: RoomTypeRow, body: RatePlanInput) {
       .where(eq(ratePlans.roomTypeId, rt.id));
     const [row] = await tx
       .insert(ratePlans)
-      .values({ sort: next, ...defined(body), roomTypeId: rt.id })
+      .values({ sort: next, ...defined(normalizeRatePlanInput(body)), roomTypeId: rt.id })
       .returning();
     await recomputeStartingPrice(rt.propertyId, tx);
     return row;
@@ -112,7 +131,7 @@ export async function createRatePlan(rt: RoomTypeRow, body: RatePlanInput) {
 
 export async function updateRatePlan(plan: RatePlanRow, rt: RoomTypeRow, body: Partial<RatePlanInput>) {
   return db.transaction(async (tx) => {
-    const cols = defined(body);
+    const cols = defined(normalizeRatePlanInput(body));
     const [row] = Object.keys(cols).length
       ? await tx.update(ratePlans).set(cols).where(eq(ratePlans.id, plan.id)).returning()
       : [plan];

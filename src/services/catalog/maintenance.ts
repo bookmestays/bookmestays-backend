@@ -10,10 +10,17 @@ import { cities, collections, experiences, media, properties } from "../../db/sc
 type Exec = typeof db | Tx;
 
 export async function recomputeStartingPrice(propertyId: string, exec: Exec = db) {
+  // Lowest nightly price a guest could pay: the plan's base price, or a cheaper
+  // recurring weekday/weekend override when one is set below it.
   await exec.execute(sql`
     UPDATE properties SET starting_price = (
-      SELECT min(rp.base_price) FROM rate_plans rp
+      SELECT min(least(rp.base_price, coalesce(wk.min_price, rp.base_price)))
+      FROM rate_plans rp
       JOIN room_types rt ON rt.id = rp.room_type_id
+      LEFT JOIN LATERAL (
+        SELECT min(value::bigint) AS min_price
+        FROM jsonb_each_text(coalesce(rp.weekday_prices, '{}'::jsonb))
+      ) wk ON true
       WHERE rt.property_id = ${propertyId} AND rt.status = 'ACTIVE' AND rp.is_active
     ), updated_at = now()
     WHERE id = ${propertyId}

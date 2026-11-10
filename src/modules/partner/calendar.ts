@@ -8,6 +8,7 @@ import { audit } from "../../lib/audit";
 import { authPlugin } from "../../lib/auth";
 import { AppError, badRequest, conflict, notFound } from "../../lib/errors";
 import { addDays, diffDays, parseDate, todayIST } from "../../lib/utils";
+import { weekdayPriceOf } from "../../services/pricing";
 import { dateStr, money } from "../admin/schemas";
 import { ownProperty } from "./scope";
 
@@ -110,7 +111,8 @@ export const partnerCalendar = new Elysia({ name: "partner-calendar" })
                 const r = rateMap.get(`${plan.id}|${date}`);
                 return {
                   date,
-                  price: r?.price ?? plan.basePrice,
+                  // Explicit per-date rate → recurring weekday/weekend price → plan base price.
+                  price: r?.price ?? weekdayPriceOf(plan, date) ?? plan.basePrice,
                   minStay: r?.minStay ?? 1,
                   maxStay: r?.maxStay ?? null,
                   closedToArrival: r?.closedToArrival ?? false,

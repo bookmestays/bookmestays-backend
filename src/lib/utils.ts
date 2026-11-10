@@ -28,6 +28,12 @@ export const nightsBetween = (checkIn: string, checkOut: string) => {
 /** Today in India (IST) as YYYY-MM-DD. */
 export const todayIST = () => toDateStr(new Date(Date.now() + 5.5 * 3600_000));
 
+/** Lowercase day-of-week keys indexed by JS getUTCDay() (0 = Sunday). */
+export const WEEKDAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
+export type WeekdayKey = (typeof WEEKDAY_KEYS)[number];
+/** The weekday key (sun…sat) for a YYYY-MM-DD date. */
+export const weekdayKey = (date: string): WeekdayKey => WEEKDAY_KEYS[parseDate(date).getUTCDay()];
+
 // ─── Strings ──────────────────────────────────────────────────────────────────
 
 export const slugify = (s: string) =>

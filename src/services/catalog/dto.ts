@@ -92,6 +92,7 @@ export const toRatePlan = (r: RatePlanRow) => ({
   isRefundable: r.isRefundable,
   cancellationPolicy: r.cancellationPolicy ?? null,
   basePrice: r.basePrice,
+  weekdayPrices: r.weekdayPrices ?? null,
   extraAdultPrice: r.extraAdultPrice,
   extraChildPrice: r.extraChildPrice,
   isActive: r.isActive,

@@ -81,6 +81,17 @@ export const roomTypeFields = {
   sort: t.Optional(t.Integer()),
 };
 
+// Recurring weekday/weekend nightly price overrides (paise). Any day left out/null uses basePrice.
+export const weekdayPricesSchema = t.Object({
+  sun: t.Optional(t.Nullable(money)),
+  mon: t.Optional(t.Nullable(money)),
+  tue: t.Optional(t.Nullable(money)),
+  wed: t.Optional(t.Nullable(money)),
+  thu: t.Optional(t.Nullable(money)),
+  fri: t.Optional(t.Nullable(money)),
+  sat: t.Optional(t.Nullable(money)),
+});
+
 export const ratePlanFields = {
   name: t.String({ minLength: 1, maxLength: 160 }),
   mealPlan: t.Optional(mealPlanSchema),
@@ -88,6 +99,7 @@ export const ratePlanFields = {
   isRefundable: t.Optional(t.Boolean()),
   cancellationPolicy: t.Optional(t.Nullable(cancellationPolicySchema)),
   basePrice: money,
+  weekdayPrices: t.Optional(t.Nullable(weekdayPricesSchema)),
   extraAdultPrice: t.Optional(money),
   extraChildPrice: t.Optional(money),
   isActive: t.Optional(t.Boolean()),
