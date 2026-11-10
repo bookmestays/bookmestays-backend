@@ -45,6 +45,7 @@ async function notifyPartner(partnerId: string, subject: string, text: string) {
 const curationFields = {
   isFeatured: t.Optional(t.Boolean()),
   isRecommended: t.Optional(t.Boolean()),
+  isComingSoon: t.Optional(t.Boolean()),
   curationRank: t.Optional(t.Integer()),
   seo: t.Optional(t.Nullable(seoSchema)),
   slug: t.Optional(t.String({ minLength: 2, maxLength: 220 })),

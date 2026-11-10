@@ -68,6 +68,7 @@ export async function buildPropertyCards(rows: PropertyRow[], priceOverride?: Ma
       amenities: (amenityMap.get(p.id) ?? []).slice(0, 4).map(({ code, name, icon }) => ({ code, name, icon })),
       isGold: p.isGold,
       isRising: p.isRising,
+      isComingSoon: p.isComingSoon,
       lat: p.lat,
       lng: p.lng,
     };

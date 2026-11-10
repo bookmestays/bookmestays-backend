@@ -330,6 +330,7 @@ export async function buildAdminPropertyRows(rows: PropertyRow[]) {
     pendingRoomTypes: rtMap.get(p.id)?.pending ?? 0,
     isFeatured: p.isFeatured,
     isRecommended: p.isRecommended,
+    isComingSoon: p.isComingSoon,
     curationRank: p.curationRank,
     completedBookings: p.completedBookings,
     cancelledBookings: p.cancelledBookings,

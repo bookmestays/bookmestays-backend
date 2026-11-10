@@ -383,6 +383,9 @@ export const properties = pgTable(
     isFeatured: boolean("is_featured").notNull().default(false),
     isRecommended: boolean("is_recommended").notNull().default(false),
     curationRank: integer("curation_rank").notNull().default(0),
+    // "Coming soon": listed with full details but not yet open for booking. The property stays
+    // LIVE (so it shows on the site); booking is blocked and the UI shows a "Coming soon" state.
+    isComingSoon: boolean("is_coming_soon").notNull().default(false),
     // Auto-awarded performance tiers (recomputed from recent bookings, see services/catalog/tiers.ts).
     // Both can be true: a property that hits both targets earns both badges.
     isGold: boolean("is_gold").notNull().default(false),

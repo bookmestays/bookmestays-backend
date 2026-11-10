@@ -466,6 +466,8 @@ export async function buildQuote(
     publicOnly: true,
   });
   if (ctx.property.status !== "LIVE") throw notFound("Property");
+  if (ctx.property.isComingSoon)
+    throw unprocessable("This stay is coming soon and isn’t open for bookings yet. Please check back later.");
   if (opts.release)
     for (const [rtId, dates] of opts.release)
       for (const [date, qty] of dates) {
