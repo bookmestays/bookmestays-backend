@@ -7,6 +7,7 @@ import {
   activeExperienceCards,
   buildCityCards,
   cityOrder,
+  curatedOrder,
   livePropertyCards,
   propertyCardsByIds,
   videoFeed,
@@ -20,6 +21,12 @@ const num = (v: unknown, fallback: number, max = 50) => {
   return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), max) : fallback;
 };
 const strArray = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+
+/** Stable reorder: active (bookable) stays first, coming-soon stays at the end. */
+const comingSoonToEnd = <T extends { isComingSoon: boolean }>(cards: T[]) => [
+  ...cards.filter((c) => !c.isComingSoon),
+  ...cards.filter((c) => c.isComingSoon),
+];
 
 async function resolveCityId(config: Record<string, unknown>) {
   if (typeof config.cityId === "string") return config.cityId;
@@ -131,14 +138,17 @@ async function resolveSection(s: SectionRow) {
     case "FEATURED": {
       const ids = strArray(config.propertyIds);
       const cityId = await resolveCityId(config);
+      // Coming-soon stays rank after active (bookable) ones in these sections.
+      const comingSoonLast = [asc(properties.isComingSoon), ...(await curatedOrder())];
       const items = ids.length
-        ? await propertyCardsByIds(ids.slice(0, limit))
+        ? comingSoonToEnd(await propertyCardsByIds(ids.slice(0, limit)))
         : await livePropertyCards(
             and(
               s.type === "FEATURED" ? eq(properties.isFeatured, true) : eq(properties.isRecommended, true),
               cityId ? eq(properties.cityId, cityId) : undefined,
             ),
             limit,
+            comingSoonLast,
           );
       return { ...base, type: s.type, items };
     }
