@@ -8,7 +8,9 @@
 //    closed-to-departure on the check-out date.
 //  • room GST: per room per night, slab from site_settings.tax.roomGstSlabs on that night's price.
 //  • commission: room type rule → property rule → partner-wide rule → partner default.
-//  • payout = room + room GST − commission − GST on commission − TCS − TDS − partner-funded discount.
+//  • guest total = room + room GST + commission (platform fee, charged on top) − discount.
+//  • payout = room + room GST − TCS − TDS − partner-funded discount (commission is charged to the guest,
+//    so it is NOT deducted from the partner — the partner receives their full set rate + room GST).
 import { and, desc, eq, gte, inArray, isNull, lt, lte, notInArray, or, sql } from "drizzle-orm";
 import { db, type Tx } from "../db";
 import {
@@ -424,6 +426,7 @@ export type PriceQuote = {
   roomAmount: number;
   roomTax: number;
   addonsAmount: number;
+  serviceFee: number; // platform commission, charged to the guest on top of room + GST
   discountAmount: number;
   totalAmount: number;
   coupon: { code: string; discount: number } | null;
@@ -556,12 +559,16 @@ export async function buildQuote(
   }
 
   const commissionAmount = lines.reduce((s, l) => s + l.commissionAmount, 0);
-  const commissionTax = applyBps(commissionAmount, ctx.tax.commissionGstBps);
+  // Commission is charged to the guest on top of the room price (not netted out of the payout),
+  // and carries no separate GST line — the platform fee is shown to the guest as a single amount.
+  const commissionTax = 0;
   const tcsAmount = applyBps(roomAmount, ctx.tax.tcsBps);
   const tdsAmount = applyBps(roomAmount, ctx.tax.tdsBps);
   const partnerFunded = coupon?.fundedBy === "PARTNER" ? discountAmount : 0;
-  const partnerPayout = roomAmount + roomTax - commissionAmount - commissionTax - tcsAmount - tdsAmount - partnerFunded;
-  const totalAmount = roomAmount + roomTax - discountAmount;
+  // Partner receives their full set rate + room GST, less only the statutory TCS/TDS withholdings.
+  const partnerPayout = roomAmount + roomTax - tcsAmount - tdsAmount - partnerFunded;
+  // Guest pays room + room GST + the platform commission, then any discount.
+  const totalAmount = roomAmount + roomTax + commissionAmount - discountAmount;
 
   const cancellationPolicy = strictestPolicy(
     lines.map((l) => ratePlanPolicy(l.ratePlan, ctx.property, ctx.partner)),
@@ -582,6 +589,7 @@ export async function buildQuote(
     roomAmount,
     roomTax,
     addonsAmount: 0,
+    serviceFee: commissionAmount,
     discountAmount,
     totalAmount,
     coupon: coupon ? { code: coupon.code, discount: discountAmount } : null,

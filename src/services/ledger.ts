@@ -17,12 +17,12 @@ export const BOOKING_ENTRY_TYPES = [
 ] as const;
 
 function bookingEntryRows(b: BookingRow) {
+  // Commission is charged to the guest on top of the room price (not netted out of the partner payout),
+  // so it is NOT a partner-ledger debit. The partner keeps room + room GST, less statutory TCS/TDS.
   const partnerFundedDiscount =
-    b.roomAmount + b.roomTax - b.commissionAmount - b.commissionTax - b.tcsAmount - b.tdsAmount - b.partnerPayout;
+    b.roomAmount + b.roomTax - b.tcsAmount - b.tdsAmount - b.partnerPayout;
   return [
     { type: "BOOKING_CREDIT" as const, amount: b.roomAmount + b.roomTax, description: `Booking ${b.code}: room + GST` },
-    { type: "COMMISSION_DEBIT" as const, amount: -b.commissionAmount, description: `Booking ${b.code}: commission` },
-    { type: "COMMISSION_GST_DEBIT" as const, amount: -b.commissionTax, description: `Booking ${b.code}: GST on commission` },
     { type: "TCS_DEBIT" as const, amount: -b.tcsAmount, description: `Booking ${b.code}: TCS` },
     { type: "TDS_DEBIT" as const, amount: -b.tdsAmount, description: `Booking ${b.code}: TDS` },
     ...(partnerFundedDiscount
@@ -53,8 +53,9 @@ export async function postBookingReversalEntries(tx: Tx, oldBooking: BookingRow,
 
 /**
  * On cancellation the guest gets `refundAmount` back (fraction f of what they paid). The partner bears
- * f of the room value (REFUND_DEBIT) and we give back f of commission / GST / TCS / TDS (reversal rows),
- * so the partner nets (1 − f) × payout. A full refund nets the booking to zero.
+ * f of the room value (REFUND_DEBIT) and we give back f of TCS / TDS (reversal rows), so the partner nets
+ * (1 − f) × payout. Commission was the guest's to pay (and is refunded to the guest from the platform's own
+ * share), so there is no commission reversal on the partner ledger. A full refund nets the booking to zero.
  */
 export async function postCancellationEntries(tx: Tx, b: BookingRow, refundAmount: number, policyFraction?: number) {
   if (b.totalAmount <= 0) return;
@@ -64,11 +65,9 @@ export async function postCancellationEntries(tx: Tx, b: BookingRow, refundAmoun
   if (f <= 0) return;
   const part = (n: number) => Math.round(n * f);
   const partnerFundedDiscount =
-    b.roomAmount + b.roomTax - b.commissionAmount - b.commissionTax - b.tcsAmount - b.tdsAmount - b.partnerPayout;
+    b.roomAmount + b.roomTax - b.tcsAmount - b.tdsAmount - b.partnerPayout;
   const rows = [
     { type: "REFUND_DEBIT" as const, amount: -part(b.roomAmount + b.roomTax - partnerFundedDiscount), description: `Booking ${b.code}: guest refund` },
-    { type: "COMMISSION_DEBIT" as const, amount: part(b.commissionAmount), description: `Booking ${b.code}: commission reversal` },
-    { type: "COMMISSION_GST_DEBIT" as const, amount: part(b.commissionTax), description: `Booking ${b.code}: GST on commission reversal` },
     { type: "TCS_DEBIT" as const, amount: part(b.tcsAmount), description: `Booking ${b.code}: TCS reversal` },
     { type: "TDS_DEBIT" as const, amount: part(b.tdsAmount), description: `Booking ${b.code}: TDS reversal` },
   ].filter((r) => r.amount !== 0);

@@ -119,8 +119,9 @@ async function priceModification(exec: typeof db | Tx, b: BookingRow, input: Mod
   const gross = q.roomAmount + q.roomTax;
   const discountAmount = Math.max(0, Math.min(b.discountAmount, gross - 100));
   const partnerFunded = coupon?.fundedBy === "PARTNER" ? discountAmount : 0;
-  const totalAmount = gross - discountAmount;
-  const partnerPayout = gross - q.commissionAmount - q.commissionTax - q.tcsAmount - q.tdsAmount - partnerFunded;
+  // Commission is charged to the guest on top; the partner keeps room + GST less statutory TCS/TDS.
+  const totalAmount = gross + q.commissionAmount - discountAmount;
+  const partnerPayout = gross - q.tcsAmount - q.tdsAmount - partnerFunded;
 
   const snapshot: ModificationQuoteSnapshot = {
     nights: q.quote.nights,

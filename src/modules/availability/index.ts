@@ -7,9 +7,11 @@ import { notFound } from "../../lib/errors";
 import {
   allocateGuests,
   availableRooms,
+  commissionFor,
   loadPricingContext,
   priceRooms,
   ratePlanPolicy,
+  resolveCommissions,
   restrictionReason,
   validateStay,
   type Occupancy,
@@ -51,6 +53,11 @@ export const availabilityModule = new Elysia({ tags: ["Availability"] }).get(
 
     const ctx = await loadPricingContext(db, property.id, query.checkIn, query.checkOut, { publicOnly: true });
     const rtIds = ctx.roomTypes.map((r) => r.id);
+    // Commission is charged to the guest as a service fee on top of room + GST, so quote it here too
+    // (keeps the property-page estimate in step with the authoritative checkout total).
+    const commissions = rtIds.length
+      ? await resolveCommissions(db, ctx.partner, ctx.property.id, rtIds)
+      : new Map();
     const [amenityRows, mediaRows] = rtIds.length
       ? await Promise.all([
           db
@@ -103,6 +110,10 @@ export const availabilityModule = new Elysia({ tags: ["Availability"] }).get(
             .map((rp) => {
               const priced = priceRooms(ctx, rp, occs);
               const totalPrice = Math.round(priced.amount / rooms);
+              const commission = commissions.get(rt.id);
+              const feePerRoom = commission
+                ? Math.round(commissionFor(commission, priced.amount, rooms * nights) / rooms)
+                : 0;
               const reason =
                 available === 0
                   ? "Sold out"
@@ -120,6 +131,7 @@ export const availabilityModule = new Elysia({ tags: ["Availability"] }).get(
                 totalPrice,
                 avgNightly: Math.round(totalPrice / nights),
                 taxesPerRoom: Math.round(priced.tax / rooms),
+                feePerRoom,
                 available,
                 bookable: !reason,
                 ...(reason ? { reason } : {}),
