@@ -141,6 +141,25 @@ export function sendWhatsAppBookingPartner(o: {
 }
 
 /**
+ * New booking → admin/ops alert. Utility template. Param order:
+ *   {{1}} property  {{2}} code  {{3}} guest  {{4}} check-in  {{5}} check-out  {{6}} amount
+ * Fans out to every number in ADMIN_WHATSAPP_NUMBERS.
+ */
+export function sendWhatsAppBookingAdmin(o: {
+  property: string;
+  code: string;
+  guestName: string;
+  checkIn: string;
+  checkOut: string;
+  amount: string;
+}): Promise<void>[] {
+  const params: (string | number)[] = [o.property, o.code, o.guestName, o.checkIn, o.checkOut, o.amount];
+  return env.whatsapp.adminNumbers.map((phone) =>
+    sendWhatsApp({ campaignName: env.whatsapp.campaigns.bookingAdmin, destination: phone, templateParams: params }),
+  );
+}
+
+/**
  * Booking cancelled → guest. Utility template. Param order:
  *   {{1}} guest name   {{2}} booking code  {{3}} property   {{4}} refund line
  */

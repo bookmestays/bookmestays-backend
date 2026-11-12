@@ -73,10 +73,16 @@ export const env = {
     senderName: optional("AISENSY_SENDER_NAME", "BookMeStays"),
     // Authentication templates carry a copy-code button; set false if your OTP template has none.
     otpCopyCodeButton: optional("AISENSY_OTP_COPY_CODE_BUTTON", "true") === "true",
+    // WhatsApp numbers that receive an internal alert on every new booking.
+    adminNumbers: optional("ADMIN_WHATSAPP_NUMBERS")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
     campaigns: {
       otp: optional("AISENSY_CAMPAIGN_OTP"), // authentication template, body param {{1}} = the code
       bookingGuest: optional("AISENSY_CAMPAIGN_BOOKING_GUEST"), // utility template → guest
       bookingPartner: optional("AISENSY_CAMPAIGN_BOOKING_PARTNER"), // utility template → partner
+      bookingAdmin: optional("AISENSY_CAMPAIGN_BOOKING_ADMIN"), // utility template → admin ops
       bookingCancelledGuest: optional("AISENSY_CAMPAIGN_BOOKING_CANCELLED_GUEST"),
       bookingCancelledPartner: optional("AISENSY_CAMPAIGN_BOOKING_CANCELLED_PARTNER"),
     },

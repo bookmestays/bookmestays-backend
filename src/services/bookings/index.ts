@@ -26,6 +26,7 @@ import {
 import { notifyLater, sendEmail } from "../../lib/notify";
 import {
   notifyWhatsAppLater,
+  sendWhatsAppBookingAdmin,
   sendWhatsAppBookingGuest,
   sendWhatsAppBookingPartner,
   sendWhatsAppCancelledGuest,
@@ -810,6 +811,17 @@ async function sendConfirmationEmails(b: BookingRow) {
         payout: inr(b.partnerPayout),
       }),
     );
+
+  // ── Admin / ops alert ── (every new booking, to the numbers in ADMIN_WHATSAPP_NUMBERS)
+  for (const send of sendWhatsAppBookingAdmin({
+    property: propertyName,
+    code: b.code,
+    guestName: b.guestName,
+    checkIn: fmtDate(b.checkIn),
+    checkOut: fmtDate(b.checkOut),
+    amount: inr(b.totalAmount),
+  }))
+    notifyWhatsAppLater(send);
 }
 
 /** On a cancelled booking: email + WhatsApp to the guest, and email + WhatsApp to the partner. */
