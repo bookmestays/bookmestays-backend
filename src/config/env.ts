@@ -63,6 +63,25 @@ export const env = {
     from: optional("EMAIL_FROM", "BookMeStays <no-reply@bookmestays.com>"),
   },
 
+  // WhatsApp (AiSensy). provider: console | aisensy  (console just logs, useful in development).
+  // Each `campaign` maps to an API Campaign you create in the AiSensy dashboard, linked to an
+  // approved WhatsApp template. The campaign name here MUST match the name in AiSensy exactly.
+  whatsapp: {
+    provider: optional("WHATSAPP_PROVIDER", "console"),
+    apiKey: optional("AISENSY_API_KEY"), // Manage → API Key in the AiSensy dashboard (a long JWT)
+    apiUrl: optional("AISENSY_API_URL", "https://backend.aisensy.com/campaign/t1/api/v2"),
+    senderName: optional("AISENSY_SENDER_NAME", "BookMeStays"),
+    // Authentication templates carry a copy-code button; set false if your OTP template has none.
+    otpCopyCodeButton: optional("AISENSY_OTP_COPY_CODE_BUTTON", "true") === "true",
+    campaigns: {
+      otp: optional("AISENSY_CAMPAIGN_OTP"), // authentication template, body param {{1}} = the code
+      bookingGuest: optional("AISENSY_CAMPAIGN_BOOKING_GUEST"), // utility template → guest
+      bookingPartner: optional("AISENSY_CAMPAIGN_BOOKING_PARTNER"), // utility template → partner
+      bookingCancelledGuest: optional("AISENSY_CAMPAIGN_BOOKING_CANCELLED_GUEST"),
+      bookingCancelledPartner: optional("AISENSY_CAMPAIGN_BOOKING_CANCELLED_PARTNER"),
+    },
+  },
+
   channelManagers: {
     channelCode: optional("CM_CHANNEL_CODE", "BOOKMESTAYS"),
     AXISROOMS: channelManager("AXISROOMS"),

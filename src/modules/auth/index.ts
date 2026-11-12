@@ -17,6 +17,7 @@ import {
 import { badRequest, conflict, unauthorized } from "../../lib/errors";
 import { otpEmail } from "../../lib/email-templates";
 import { notifyLater, sendEmail } from "../../lib/notify";
+import { sendWhatsAppOtp } from "../../lib/whatsapp";
 import { sha256 } from "../../lib/utils";
 import { createUserWithTempPassword, linkPartnerUser, normalizePhone as normalizePhoneStrict } from "../../services/catalog/accounts";
 
@@ -239,11 +240,16 @@ export const authModule = new Elysia({ prefix: "/auth", tags: ["Auth"] })
     },
   )
 
-  // OTP login/signup for guests (email only; phone is collected for bookings, never verified by SMS)
+  // OTP login/signup for guests. The target can be an email (code goes to inbox) or a mobile
+  // number (code goes to WhatsApp via AiSensy). Verifying a code creates the account if new.
   .post(
     "/otp/request",
     async ({ body }) => {
-      const target = body.target.trim().toLowerCase();
+      const raw = body.target.trim();
+      const viaPhone = !isEmail(raw);
+      const target = viaPhone ? normalizePhone(raw) : raw.toLowerCase();
+      if (viaPhone && !/^\+\d{10,15}$/.test(target)) throw badRequest("Enter a valid mobile number");
+
       const recent = await db.query.otpCodes.findFirst({
         where: and(eq(otpCodes.target, target), gt(otpCodes.createdAt, new Date(Date.now() - 30_000))),
       });
@@ -256,20 +262,24 @@ export const authModule = new Elysia({ prefix: "/auth", tags: ["Auth"] })
         expiresAt: new Date(Date.now() + OTP_TTL_MINUTES * 60_000),
       });
       try {
-        await sendEmail({ to: target, ...otpEmail({ code, minutes: OTP_TTL_MINUTES }) });
+        if (viaPhone) await sendWhatsAppOtp(target, code);
+        else await sendEmail({ to: target, ...otpEmail({ code, minutes: OTP_TTL_MINUTES }) });
       } catch (err) {
-        console.error("OTP email failed:", err);
-        throw badRequest("Couldn't send the code to this email. Please try again");
+        console.error(`OTP ${viaPhone ? "WhatsApp" : "email"} failed:`, err);
+        throw badRequest(`Couldn't send the code to this ${viaPhone ? "number" : "email"}. Please try again`);
       }
-      return { sent: true, target };
+      return { sent: true, target, channel: viaPhone ? "whatsapp" : "email" };
     },
-    { body: t.Object({ target: t.String({ format: "email" }) }) },
+    { body: t.Object({ target: t.String({ minLength: 3 }) }) },
   )
 
   .post(
     "/otp/verify",
     async ({ body, cookie, headers, startSession }) => {
-      const target = body.target.trim().toLowerCase();
+      const raw = body.target.trim();
+      const viaPhone = !isEmail(raw);
+      const target = viaPhone ? normalizePhone(raw) : raw.toLowerCase();
+
       const otp = await db.query.otpCodes.findFirst({
         where: and(
           eq(otpCodes.target, target),
@@ -286,20 +296,32 @@ export const authModule = new Elysia({ prefix: "/auth", tags: ["Auth"] })
       }
       await db.update(otpCodes).set({ consumedAt: new Date() }).where(eq(otpCodes.id, otp.id));
 
-      let user = await db.query.users.findFirst({ where: sql`lower(${users.email}) = ${target}` });
+      let user = await db.query.users.findFirst({
+        where: viaPhone ? eq(users.phone, target) : sql`lower(${users.email}) = ${target}`,
+      });
       if (!user) {
         [user] = await db
           .insert(users)
-          .values({ name: body.name?.trim() || null, email: target, emailVerified: true, role: "CUSTOMER" })
+          .values({
+            name: body.name?.trim() || null,
+            email: viaPhone ? null : target,
+            phone: viaPhone ? target : null,
+            emailVerified: !viaPhone,
+            phoneVerified: viaPhone,
+            role: "CUSTOMER",
+          })
           .returning();
       } else {
-        await db.update(users).set({ emailVerified: true }).where(eq(users.id, user.id));
+        await db
+          .update(users)
+          .set(viaPhone ? { phoneVerified: true } : { emailVerified: true })
+          .where(eq(users.id, user.id));
       }
       return startSession(user.id, cookie, { userAgent: headers["user-agent"] });
     },
     {
       body: t.Object({
-        target: t.String({ format: "email" }),
+        target: t.String({ minLength: 3 }),
         code: t.String({ minLength: 6, maxLength: 6 }),
         name: t.Optional(t.String({ maxLength: 160 })),
       }),

@@ -17,7 +17,20 @@ import {
   roomTypes,
 } from "../../db/schema";
 import { AppError, conflict, notFound, unprocessable } from "../../lib/errors";
+import {
+  bookingCancelledGuestEmail,
+  bookingCancelledPartnerEmail,
+  bookingConfirmedGuestEmail,
+  bookingConfirmedPartnerEmail,
+} from "../../lib/email-templates";
 import { notifyLater, sendEmail } from "../../lib/notify";
+import {
+  notifyWhatsAppLater,
+  sendWhatsAppBookingGuest,
+  sendWhatsAppBookingPartner,
+  sendWhatsAppCancelledGuest,
+  sendWhatsAppCancelledPartner,
+} from "../../lib/whatsapp";
 import { addDays, bookingCode, nightsBetween, todayIST } from "../../lib/utils";
 import { activeConnectionFor, queueReservationPush } from "../channel/outbound";
 import { recalcPopularity, refreshPopularityFor } from "../catalog/popularity";
@@ -714,62 +727,144 @@ export async function emailContext(b: BookingRow) {
   const rooms = await db.select().from(bookingRooms).where(eq(bookingRooms.bookingId, b.id));
   const roomsText = rooms.map((r) => `${r.quantity} × ${r.roomTypeName} (${r.ratePlanName})`).join(", ");
   const partnerEmails = [...new Set([partner?.email, p?.contactEmail].filter(Boolean) as string[])];
-  return { p, roomsText, partnerEmails };
+  // Partner WhatsApp numbers (business phone + the property's contact phone, if any).
+  const partnerPhones = [...new Set([partner?.phone, p?.contactPhone].filter(Boolean) as string[])];
+  return { p, partner, roomsText, partnerEmails, partnerPhones };
 }
 
+/** "2026-11-20" → "20 Nov 2026" (falls back to the raw value if it won't parse). */
+const fmtDate = (d: string | Date) => {
+  const dt = typeof d === "string" ? new Date(`${d}T00:00:00`) : d;
+  return Number.isNaN(dt.getTime())
+    ? String(d)
+    : dt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+};
+
+const stayLine = (b: BookingRow) => `${fmtDate(b.checkIn)} → ${fmtDate(b.checkOut)} (${b.nights} night${b.nights > 1 ? "s" : ""})`;
+const guestsLine = (b: BookingRow) => `${b.adults} adult(s), ${b.children} child(ren)`;
+const refundLine = (b: BookingRow) =>
+  b.refundAmount > 0
+    ? `A refund of ${inr(b.refundAmount)} has been initiated to your original payment method (5–7 working days).`
+    : "No refund is applicable as per the cancellation policy.";
+
+/** On a confirmed booking: email + WhatsApp to the guest, and email + WhatsApp to the partner. */
 async function sendConfirmationEmails(b: BookingRow) {
-  const { p, roomsText, partnerEmails } = await emailContext(b);
-  const stay = `${b.checkIn} → ${b.checkOut} (${b.nights} night${b.nights > 1 ? "s" : ""})`;
-  const guestText = [
-    `Hi ${b.guestName}, your stay at ${p?.name} is confirmed.`,
-    `Booking code: ${b.code}`,
-    `Stay: ${stay}, check-in from ${p?.checkInTime ?? "14:00"}`,
-    `Rooms: ${roomsText}`,
-    `Guests: ${b.adults} adult(s), ${b.children} child(ren)`,
-    `Amount paid: ${inr(b.totalAmount)}`,
-    `Manage your booking: ${env.webUrl}/account/bookings/${b.code}`,
-  ].join("\n");
-  await sendEmail({
-    to: b.guestEmail,
-    subject: `Booking confirmed — ${p?.name} (${b.code})`,
-    text: guestText,
-    html: `<p>${guestText.replace(/\n/g, "<br>")}</p>`,
+  const { p, roomsText, partnerEmails, partnerPhones } = await emailContext(b);
+  const stay = stayLine(b);
+  const guests = guestsLine(b);
+  const propertyName = p?.name ?? "your stay";
+  const manageUrl = `${env.webUrl}/account/bookings/${b.code}`;
+
+  // ── Guest ──
+  const guestEmail = bookingConfirmedGuestEmail({
+    code: b.code,
+    propertyName,
+    guestName: b.guestName,
+    stay,
+    checkInTime: p?.checkInTime ?? "14:00",
+    roomsText,
+    guestsText: guests,
+    amount: inr(b.totalAmount),
+    manageUrl,
   });
-  const partnerText = [
-    `New booking ${b.code} at ${p?.name}.`,
-    `Guest: ${b.guestName}, ${b.guestPhone}, ${b.guestEmail}`,
-    `Stay: ${stay}`,
-    `Rooms: ${roomsText}`,
-    `Guests: ${b.adults} adult(s), ${b.children} child(ren)`,
-    b.specialRequests ? `Special requests: ${b.specialRequests}` : "",
-    `Prepaid online. Your payout: ${inr(b.partnerPayout)} (settles on/after ${b.settlementDueDate}).`,
-  ]
-    .filter(Boolean)
-    .join("\n");
-  for (const to of partnerEmails)
-    await sendEmail({
-      to,
-      subject: `New booking ${b.code} — ${b.checkIn}`,
-      text: partnerText,
-      html: `<p>${partnerText.replace(/\n/g, "<br>")}</p>`,
-    });
+  await sendEmail({ to: b.guestEmail, ...guestEmail });
+  if (b.guestPhone)
+    notifyWhatsAppLater(
+      sendWhatsAppBookingGuest({
+        phone: b.guestPhone,
+        guestName: b.guestName,
+        property: propertyName,
+        code: b.code,
+        checkIn: fmtDate(b.checkIn),
+        checkOut: fmtDate(b.checkOut),
+        amount: inr(b.totalAmount),
+      }),
+    );
+
+  // ── Partner ──
+  const partnerEmail = bookingConfirmedPartnerEmail({
+    code: b.code,
+    propertyName,
+    guestName: b.guestName,
+    guestPhone: b.guestPhone,
+    guestEmail: b.guestEmail,
+    stay,
+    roomsText,
+    guestsText: guests,
+    amount: inr(b.totalAmount),
+    payout: inr(b.partnerPayout),
+    settlementDueDate: b.settlementDueDate ? String(b.settlementDueDate) : undefined,
+    specialRequests: b.specialRequests,
+  });
+  for (const to of partnerEmails) await sendEmail({ to, ...partnerEmail });
+  for (const phone of partnerPhones)
+    notifyWhatsAppLater(
+      sendWhatsAppBookingPartner({
+        phone,
+        property: propertyName,
+        code: b.code,
+        guestName: b.guestName,
+        checkIn: fmtDate(b.checkIn),
+        checkOut: fmtDate(b.checkOut),
+        rooms: roomsText,
+        payout: inr(b.partnerPayout),
+      }),
+    );
 }
 
+/** On a cancelled booking: email + WhatsApp to the guest, and email + WhatsApp to the partner. */
 async function sendCancellationEmails(b: BookingRow) {
-  const { p, partnerEmails } = await emailContext(b);
-  const guestText = [
-    `Hi ${b.guestName}, your booking ${b.code} at ${p?.name} (${b.checkIn} → ${b.checkOut}) has been cancelled.`,
-    b.refundAmount > 0
-      ? `A refund of ${inr(b.refundAmount)} has been initiated to your original payment method (5–7 working days).`
-      : "No refund is applicable as per the cancellation policy.",
-  ].join("\n");
+  const { p, partnerEmails, partnerPhones } = await emailContext(b);
+  const propertyName = p?.name ?? "your stay";
+  const stay = stayLine(b);
+  const refund = refundLine(b);
+
+  // ── Guest ──
   await sendEmail({
     to: b.guestEmail,
-    subject: `Booking cancelled — ${b.code}`,
-    text: guestText,
-    html: `<p>${guestText.replace(/\n/g, "<br>")}</p>`,
+    ...bookingCancelledGuestEmail({
+      code: b.code,
+      propertyName,
+      guestName: b.guestName,
+      stay,
+      roomsText: "",
+      guestsText: "",
+      amount: inr(b.totalAmount),
+      refundLine: refund,
+    }),
   });
-  const partnerText = `Booking ${b.code} (${b.guestName}, ${b.checkIn} → ${b.checkOut}) was cancelled${b.cancelReason ? `: ${b.cancelReason}` : ""}. Inventory has been released.`;
-  for (const to of partnerEmails)
-    await sendEmail({ to, subject: `Booking cancelled — ${b.code}`, text: partnerText, html: `<p>${partnerText}</p>` });
+  if (b.guestPhone)
+    notifyWhatsAppLater(
+      sendWhatsAppCancelledGuest({
+        phone: b.guestPhone,
+        guestName: b.guestName,
+        code: b.code,
+        property: propertyName,
+        refundLine: refund,
+      }),
+    );
+
+  // ── Partner ──
+  const partnerEmail = bookingCancelledPartnerEmail({
+    code: b.code,
+    propertyName,
+    guestName: b.guestName,
+    stay,
+    roomsText: "",
+    guestsText: "",
+    amount: inr(b.totalAmount),
+    cancelReason: b.cancelReason,
+  });
+  for (const to of partnerEmails) await sendEmail({ to, ...partnerEmail });
+  for (const phone of partnerPhones)
+    notifyWhatsAppLater(
+      sendWhatsAppCancelledPartner({
+        phone,
+        code: b.code,
+        guestName: b.guestName,
+        property: propertyName,
+        checkIn: fmtDate(b.checkIn),
+        checkOut: fmtDate(b.checkOut),
+      }),
+    );
 }
