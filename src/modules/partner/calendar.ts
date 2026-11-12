@@ -33,6 +33,56 @@ const channelManagedError = () =>
     "Rates and availability for this property are managed by your channel manager. Update them there.",
   );
 
+/**
+ * Lock the given dates FOR UPDATE, reject any that would oversell (sold + held + blocked > total),
+ * then upsert total / blocked / stopSell. Only the fields present in `patch` are written; a missing
+ * inventory row defaults to `rt.totalRooms`. Shared by the inventory and sold-out endpoints.
+ */
+async function writeInventory(
+  rt: { id: string; totalRooms: number },
+  dates: string[],
+  patch: { total?: number; blocked?: number; stopSell?: boolean },
+) {
+  await db.transaction(async (tx) => {
+    const existing = await tx
+      .select()
+      .from(inventory)
+      .where(and(eq(inventory.roomTypeId, rt.id), inArray(inventory.date, dates)))
+      .for("update");
+    const byDate = new Map(existing.map((r) => [r.date, r]));
+    const invalid: { date: string; committed: number }[] = [];
+    for (const date of dates) {
+      const cur = byDate.get(date);
+      const total = patch.total ?? cur?.total ?? rt.totalRooms;
+      const blocked = patch.blocked ?? cur?.blocked ?? 0;
+      const committed = (cur?.sold ?? 0) + (cur?.held ?? 0);
+      if (committed + blocked > total) invalid.push({ date, committed });
+    }
+    if (invalid.length)
+      throw conflict(
+        `Booked + blocked rooms would exceed the total rooms on ${invalid.length} date(s) (e.g. ${invalid[0].date})`,
+        invalid.slice(0, 31),
+      );
+    const set: Record<string, unknown> = { updatedAt: new Date(), updatedBy: "PARTNER" };
+    if (patch.total !== undefined) set.total = sql`excluded.total`;
+    if (patch.blocked !== undefined) set.blocked = sql`excluded.blocked`;
+    if (patch.stopSell !== undefined) set.stopSell = sql`excluded.stop_sell`;
+    await tx
+      .insert(inventory)
+      .values(
+        dates.map((date) => ({
+          roomTypeId: rt.id,
+          date,
+          total: patch.total ?? rt.totalRooms,
+          blocked: patch.blocked ?? 0,
+          stopSell: patch.stopSell ?? false,
+          updatedBy: "PARTNER",
+        })),
+      )
+      .onConflictDoUpdate({ target: [inventory.roomTypeId, inventory.date], set });
+  });
+}
+
 export const partnerCalendar = new Elysia({ name: "partner-calendar" })
   .use(authPlugin)
 
@@ -139,46 +189,7 @@ export const partnerCalendar = new Elysia({ name: "partner-calendar" })
       if (body.total === undefined && body.blocked === undefined && body.stopSell === undefined)
         throw badRequest("Nothing to update — set total, blocked or stopSell");
       const dates = datesInRange(body.from, body.to, body.daysOfWeek);
-
-      await db.transaction(async (tx) => {
-        // Lock existing rows so concurrent bookings cannot oversell while we validate.
-        const existing = await tx
-          .select()
-          .from(inventory)
-          .where(and(eq(inventory.roomTypeId, rt.id), inArray(inventory.date, dates)))
-          .for("update");
-        const byDate = new Map(existing.map((r) => [r.date, r]));
-        const invalid: { date: string; committed: number }[] = [];
-        for (const date of dates) {
-          const cur = byDate.get(date);
-          const total = body.total ?? cur?.total ?? rt.totalRooms;
-          const blocked = body.blocked ?? cur?.blocked ?? 0;
-          const committed = (cur?.sold ?? 0) + (cur?.held ?? 0);
-          if (committed + blocked > total) invalid.push({ date, committed });
-        }
-        if (invalid.length)
-          throw conflict(
-            `Booked + blocked rooms would exceed the total rooms on ${invalid.length} date(s) (e.g. ${invalid[0].date})`,
-            invalid.slice(0, 31),
-          );
-        const set: Record<string, unknown> = { updatedAt: new Date(), updatedBy: "PARTNER" };
-        if (body.total !== undefined) set.total = sql`excluded.total`;
-        if (body.blocked !== undefined) set.blocked = sql`excluded.blocked`;
-        if (body.stopSell !== undefined) set.stopSell = sql`excluded.stop_sell`;
-        await tx
-          .insert(inventory)
-          .values(
-            dates.map((date) => ({
-              roomTypeId: rt.id,
-              date,
-              total: body.total ?? rt.totalRooms,
-              blocked: body.blocked ?? 0,
-              stopSell: body.stopSell ?? false,
-              updatedBy: "PARTNER",
-            })),
-          )
-          .onConflictDoUpdate({ target: [inventory.roomTypeId, inventory.date], set });
-      });
+      await writeInventory(rt, dates, { total: body.total, blocked: body.blocked, stopSell: body.stopSell });
       await audit(authUser, "calendar.inventory", "room_type", rt.id, { ...body, days: dates.length });
       return { ok: true, days: dates.length };
     },
@@ -193,6 +204,41 @@ export const partnerCalendar = new Elysia({ name: "partner-calendar" })
         total: t.Optional(t.Integer({ minimum: 0, maximum: 10000 })),
         blocked: t.Optional(t.Integer({ minimum: 0, maximum: 10000 })),
         stopSell: t.Optional(t.Boolean()),
+      }),
+    },
+  )
+
+  // Mark dates sold out because rooms were booked on another site or offline (not through BMS).
+  // `roomsBookedElsewhere` closes that many rooms (→ blocked); `fullySoldOut` closes the whole
+  // room type for the date (→ stopSell). Reopen by sending 0 / false.
+  .put(
+    "/properties/:id/calendar/sold-out",
+    async ({ authUser, partnerId, params, body }) => {
+      const p = await ownProperty(partnerId, params.id);
+      if (p.channelManaged) throw channelManagedError();
+      const rt = await db.query.roomTypes.findFirst({
+        where: and(eq(roomTypes.id, body.roomTypeId), eq(roomTypes.propertyId, p.id)),
+      });
+      if (!rt) throw notFound("Room type");
+      if (body.roomsBookedElsewhere === undefined && body.fullySoldOut === undefined)
+        throw badRequest("Enter how many rooms were booked elsewhere, or mark the dates fully sold out");
+      if (body.roomsBookedElsewhere != null && body.roomsBookedElsewhere > rt.totalRooms)
+        throw badRequest(`You have only ${rt.totalRooms} room(s) of this type`);
+      const dates = datesInRange(body.from, body.to, body.daysOfWeek);
+      await writeInventory(rt, dates, { blocked: body.roomsBookedElsewhere, stopSell: body.fullySoldOut });
+      await audit(authUser, "calendar.soldOut", "room_type", rt.id, { ...body, days: dates.length });
+      return { ok: true, days: dates.length };
+    },
+    {
+      partner: "inventory",
+      params: idParams,
+      body: t.Object({
+        roomTypeId: t.String({ format: "uuid" }),
+        from: dateStr,
+        to: dateStr,
+        daysOfWeek: t.Optional(t.Array(t.Integer({ minimum: 0, maximum: 6 }), { maxItems: 7 })),
+        roomsBookedElsewhere: t.Optional(t.Integer({ minimum: 0, maximum: 10000 })),
+        fullySoldOut: t.Optional(t.Boolean()),
       }),
     },
   )
