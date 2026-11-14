@@ -57,9 +57,22 @@ const REFERRER_SOURCES: [RegExp, string][] = [
   [/(^|\.)pinterest\./, "Pinterest"],
 ];
 
-/** Classifies where a session came from: utm_source wins, then the referrer, else "Direct". */
-export function classifySource(ref?: string, utm?: IncomingEvent["utm"]): string {
+/** Meta's in-app browsers (a link/ad opened inside the Instagram or Facebook app) say so in the user agent. */
+export function metaAppOf(ua: string): "Instagram" | "Facebook" | null {
+  if (/instagram/i.test(ua)) return "Instagram";
+  if (/FBAN\/|FBAV\/|FB_IAB|FBIOS|FB4A/i.test(ua)) return "Facebook";
+  return null;
+}
+
+/**
+ * Classifies where a session came from: utm_source wins, then the referrer, else "Direct".
+ * Meta ads often fill utm_* with numeric ids ({{campaign.id}} etc.) — those are labelled as
+ * "Instagram Ads" / "Facebook Ads" (from the in-app browser) or "Meta Ads".
+ */
+export function classifySource(ref?: string, utm?: IncomingEvent["utm"], ua = ""): string {
   const us = utm?.source?.trim().toLowerCase();
+  const app = metaAppOf(ua);
+  if (us && /^\d{6,}$/.test(us)) return app ? `${app} Ads` : "Meta Ads";
   if (us) {
     const alias = SOURCE_ALIASES.find(([re]) => re.test(us))?.[1];
     const name = alias ?? us.charAt(0).toUpperCase() + us.slice(1);
@@ -67,7 +80,7 @@ export function classifySource(ref?: string, utm?: IncomingEvent["utm"]): string
     return (paid ? `${name} Ads` : name).slice(0, 80);
   }
   const host = ref?.trim().toLowerCase().replace(/^www\./, "");
-  if (!host) return "Direct";
+  if (!host) return app ?? "Direct"; // in-app browsers usually send no referrer
   return REFERRER_SOURCES.find(([re]) => re.test(host))?.[1] ?? host.slice(0, 80);
 }
 
@@ -133,13 +146,16 @@ export async function recordEvent(body: IncomingEvent, headers: Headers, userId:
   delete props.path;
   if (body.utm?.campaign) props.utmCampaign = body.utm.campaign.slice(0, 120);
   if (body.utm?.medium) props.utmMedium = body.utm.medium.slice(0, 60);
+  if (body.utm?.source && /^\d{6,}$/.test(body.utm.source)) props.utmSourceId = body.utm.source.slice(0, 60);
+  // Keep the raw browser string on page views so device / in-app browser detection can be audited
+  if (body.name === "page_view") props.ua = ua.slice(0, 300);
   await db.insert(analyticsEvents).values({
     name: body.name,
     sessionId: body.sessionId ?? null,
     visitorId: body.visitorId ?? null,
     userId,
     path: cleanPath(body.path ?? body.props?.path),
-    source: classifySource(body.ref, body.utm),
+    source: classifySource(body.ref, body.utm, ua),
     device: deviceOf(ua),
     ...geo,
     props: Object.keys(props).length ? props : null,
@@ -149,6 +165,8 @@ export async function recordEvent(body: IncomingEvent, headers: Headers, userId:
 // ─── Report ───────────────────────────────────────────────────────────────────
 
 const num = (v: unknown) => Number(v ?? 0);
+/** Label for rows recorded before source / device / location tracking (14 Nov 2026). */
+export const OLD = "Not recorded (older data)";
 const VID = sql`coalesce(${analyticsEvents.visitorId}, ${analyticsEvents.sessionId})`;
 const SID = sql`coalesce(${analyticsEvents.sessionId}, ${analyticsEvents.visitorId})`;
 const visitors = (where?: SQL) =>
@@ -254,7 +272,7 @@ export async function siteAnalytics(params: AnalyticsParams) {
       .limit(20),
     db
       .select({
-        source: sql<string>`coalesce(${E.source}, 'Direct')`,
+        source: sql<string>`coalesce(${E.source}, '${sql.raw(OLD)}')`,
         visitors: visitors(),
         sessions: sql<number>`count(distinct ${SID})::int`,
         bookings: sql<number>`count(distinct ${prop("bookingCode")}) filter (where ${PAID})::int`,
@@ -265,7 +283,7 @@ export async function siteAnalytics(params: AnalyticsParams) {
       .orderBy(sql`3 desc`)
       .limit(20),
     db
-      .select({ name: sql<string>`coalesce(${E.country}, 'Unknown')`, visitors: visitors() })
+      .select({ name: sql<string>`coalesce(${E.country}, '${sql.raw(OLD)}')`, visitors: visitors() })
       .from(E)
       .where(inRange)
       .groupBy(sql`1`)
@@ -313,7 +331,8 @@ export async function siteAnalytics(params: AnalyticsParams) {
         lastSeen: sql<string>`max(${E.createdAt})`,
       })
       .from(E)
-      .where(and(inRange, isEvent("js_error")))
+      // Instagram/Facebook in-app browser bridge noise recorded before the client started filtering it
+      .where(and(inRange, isEvent("js_error"), sql`coalesce(${prop("message")}, '') !~* 'Java object is gone|Java bridge method'`))
       .groupBy(sql`1`)
       .orderBy(sql`2 desc`)
       .limit(15),
