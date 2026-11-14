@@ -1164,11 +1164,22 @@ export const analyticsEvents = pgTable(
     id: id(),
     name: varchar("name", { length: 80 }).notNull(),
     userId: uuid("user_id"),
+    // Browsing session (30 min inactivity window). Rows written before visitor_id existed
+    // stored the long-lived browser id here, so reports use coalesce(visitor_id, session_id).
     sessionId: varchar("session_id", { length: 80 }),
+    // Long-lived anonymous browser id ("unique visitor")
+    visitorId: varchar("visitor_id", { length: 80 }),
+    path: varchar("path", { length: 300 }),
+    // Traffic source of the session: "Google", "Instagram", "Direct", a utm_source, …
+    source: varchar("source", { length: 80 }),
+    country: varchar("country", { length: 80 }),
+    region: varchar("region", { length: 80 }),
+    city: varchar("city", { length: 80 }),
+    device: varchar("device", { length: 20 }), // mobile | tablet | desktop
     props: jsonb("props"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("analytics_name_time_idx").on(t.name, t.createdAt)],
+  (t) => [index("analytics_name_time_idx").on(t.name, t.createdAt), index("analytics_time_idx").on(t.createdAt)],
 );
 
 // ─── Channel managers ─────────────────────────────────────────────────────────

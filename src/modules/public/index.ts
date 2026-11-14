@@ -3,7 +3,6 @@ import { Elysia, t } from "elysia";
 import { db } from "../../db";
 import {
   amenities,
-  analyticsEvents,
   areas,
   cities,
   collectionItems,
@@ -15,6 +14,7 @@ import {
   siteSettings,
 } from "../../db/schema";
 import { ADMIN_ROLES, authPlugin } from "../../lib/auth";
+import { recordEvent } from "../../services/analytics";
 import { notFound } from "../../lib/errors";
 import { pageParams, paginated } from "../../lib/utils";
 import {
@@ -379,22 +379,25 @@ export const publicModule = new Elysia({ prefix: "/public", tags: ["Public"] })
 
   .post(
     "/analytics",
-    ({ body, user }) => {
-      void db
-        .insert(analyticsEvents)
-        .values({
-          name: body.name,
-          sessionId: body.sessionId ?? null,
-          userId: user?.id ?? null,
-          props: body.props ?? null,
-        })
-        .catch((err) => console.error("analytics insert failed", err));
+    ({ body, user, request }) => {
+      void recordEvent(body, request.headers, user?.id ?? null).catch((err) => console.error("analytics insert failed", err));
       return { ok: true };
     },
     {
       body: t.Object({
         name: t.String({ minLength: 1, maxLength: 80 }),
         sessionId: t.Optional(t.String({ maxLength: 80 })),
+        visitorId: t.Optional(t.String({ maxLength: 80 })),
+        path: t.Optional(t.String({ maxLength: 2000 })),
+        ref: t.Optional(t.String({ maxLength: 255 })),
+        utm: t.Optional(
+          t.Object({
+            source: t.Optional(t.String({ maxLength: 120 })),
+            medium: t.Optional(t.String({ maxLength: 120 })),
+            campaign: t.Optional(t.String({ maxLength: 200 })),
+          }),
+        ),
+        tz: t.Optional(t.String({ maxLength: 64 })),
         props: t.Optional(t.Record(t.String(), t.Unknown())),
       }),
     },
