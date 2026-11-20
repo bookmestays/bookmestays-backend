@@ -71,7 +71,7 @@ export const authModule = new Elysia({ prefix: "/auth", tags: ["Auth"] })
       if (!user?.passwordHash || !(await Bun.password.verify(body.password, user.passwordHash)))
         throw unauthorized("Incorrect email/phone or password");
       if (!user.isActive) throw unauthorized("Account is disabled");
-      if (body.portal === "admin" && !["SUPER_ADMIN", "ADMIN_STAFF"].includes(user.role))
+      if (body.portal === "admin" && !["SUPER_ADMIN", "ADMIN_STAFF", "BLOG_EDITOR"].includes(user.role))
         throw unauthorized("This account cannot access the admin panel");
       if (body.portal === "partner" && !["PARTNER_OWNER", "PARTNER_STAFF"].includes(user.role))
         throw unauthorized("This account cannot access the partner panel");

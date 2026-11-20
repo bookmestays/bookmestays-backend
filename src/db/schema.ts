@@ -36,6 +36,7 @@ export const userRole = pgEnum("user_role", [
   "PARTNER_OWNER",
   "PARTNER_STAFF",
   "CUSTOMER",
+  "BLOG_EDITOR", // content writer: can only manage blog posts in the admin panel
 ]);
 export const otpPurpose = pgEnum("otp_purpose", ["LOGIN", "VERIFY", "RESET_PASSWORD"]);
 
@@ -77,6 +78,7 @@ export const mediaOwnerType = pgEnum("media_owner_type", [
   "COLLECTION",
   "BANNER",
   "TESTIMONIAL",
+  "BLOG",
 ]);
 export const mediaKind = pgEnum("media_kind", ["IMAGE", "VIDEO"]);
 export const mediaTag = pgEnum("media_tag", [
@@ -141,6 +143,7 @@ export const transferStatus = pgEnum("transfer_status", [
   "FAILED",
 ]);
 
+export const blogStatus = pgEnum("blog_status", ["DRAFT", "PUBLISHED"]);
 export const reviewStatus = pgEnum("review_status", ["PENDING", "PUBLISHED", "HIDDEN"]);
 export const wishlistItemType = pgEnum("wishlist_item_type", ["PROPERTY", "EXPERIENCE"]);
 export const couponType = pgEnum("coupon_type", ["PERCENT", "FLAT"]);
@@ -753,6 +756,42 @@ export const testimonials = pgTable(
     ...timestamps,
   },
   (t) => [index("testimonials_active_idx").on(t.isActive, t.sort)],
+);
+
+// ─── Blog ─────────────────────────────────────────────────────────────────────
+
+// Blog posts written by BLOG_EDITOR users (or admins). Public at /blog/<slug> once
+// PUBLISHED with publishedAt <= now (a future publishedAt = scheduled post).
+// `content` is Markdown (rendered safely on the site — raw HTML is never trusted).
+// When a published post's slug changes the old one goes to `previousSlugs`, so old
+// links keep working via a permanent redirect.
+export const blogPosts = pgTable(
+  "blog_posts",
+  {
+    id: id(),
+    title: varchar("title", { length: 200 }).notNull(),
+    slug: varchar("slug", { length: 220 }).notNull().unique(),
+    previousSlugs: text("previous_slugs").array().notNull().default(sql`'{}'::text[]`),
+    excerpt: varchar("excerpt", { length: 500 }),
+    content: text("content").notNull().default(""),
+    coverImageUrl: text("cover_image_url"),
+    coverImageAlt: varchar("cover_image_alt", { length: 200 }),
+    category: varchar("category", { length: 80 }),
+    tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
+    cityId: uuid("city_id").references(() => cities.id, { onDelete: "set null" }),
+    status: blogStatus("status").notNull().default("DRAFT"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    isFeatured: boolean("is_featured").notNull().default(false),
+    readingMinutes: integer("reading_minutes").notNull().default(1),
+    authorId: uuid("author_id").references(() => users.id, { onDelete: "set null" }),
+    authorName: varchar("author_name", { length: 160 }),
+    seo: jsonb("seo").$type<Seo>(),
+    ...timestamps,
+  },
+  (t) => [
+    index("blog_posts_status_idx").on(t.status, t.publishedAt),
+    index("blog_posts_category_idx").on(t.category),
+  ],
 );
 
 // Key/value site settings (support phone, social links, tax config…)

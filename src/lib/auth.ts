@@ -18,6 +18,10 @@ export type AuthUser = {
 
 export const ADMIN_ROLES: Role[] = ["SUPER_ADMIN", "ADMIN_STAFF"];
 export const PARTNER_ROLES: Role[] = ["PARTNER_OWNER", "PARTNER_STAFF"];
+/** Roles that can sign in to the admin panel. BLOG_EDITOR only sees the Blog section. */
+export const ADMIN_PANEL_ROLES: Role[] = [...ADMIN_ROLES, "BLOG_EDITOR"];
+/** Roles that may write / publish blog posts. */
+export const BLOG_ROLES: Role[] = ADMIN_PANEL_ROLES;
 
 export const ACCESS_COOKIE = "bms_at";
 export const REFRESH_COOKIE = "bms_rt";

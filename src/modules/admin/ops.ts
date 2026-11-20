@@ -4,7 +4,7 @@ import { Elysia, t } from "elysia";
 import { db } from "../../db";
 import { auditLogs, coupons, properties, reviews, sessions, siteSettings, users } from "../../db/schema";
 import { audit } from "../../lib/audit";
-import { ADMIN_ROLES, authPlugin } from "../../lib/auth";
+import { ADMIN_PANEL_ROLES, ADMIN_ROLES, authPlugin } from "../../lib/auth";
 import { badRequest, conflict, forbidden, notFound } from "../../lib/errors";
 import { pageParams, paginated } from "../../lib/utils";
 import { publicUser } from "../auth";
@@ -107,7 +107,7 @@ const adminUser = (u: typeof users.$inferSelect) => ({
   lastLoginAt: iso(u.lastLoginAt),
   createdAt: iso(u.createdAt)!,
 });
-const ROLE_VALUES = ["SUPER_ADMIN", "ADMIN_STAFF", "PARTNER_OWNER", "PARTNER_STAFF", "CUSTOMER"] as const;
+const ROLE_VALUES = ["SUPER_ADMIN", "ADMIN_STAFF", "PARTNER_OWNER", "PARTNER_STAFF", "CUSTOMER", "BLOG_EDITOR"] as const;
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 
@@ -341,7 +341,7 @@ export const adminOps = new Elysia({ name: "admin-ops" })
             name: body.name,
             email: body.email,
             phone: body.phone,
-            role: "ADMIN_STAFF",
+            role: body.role ?? "ADMIN_STAFF",
             password: body.password,
           });
           await audit(authUser, "user.create", "user", user.id, { email: user.email, role: user.role });
@@ -353,6 +353,8 @@ export const adminOps = new Elysia({ name: "admin-ops" })
             email: t.String({ format: "email" }),
             phone: t.Optional(t.String({ minLength: 10, maxLength: 20 })),
             password: t.Optional(t.String({ minLength: 8 })),
+            // BLOG_EDITOR = content writer who can only manage the blog
+            role: t.Optional(lit(["ADMIN_STAFF", "BLOG_EDITOR"] as const)),
           }),
         },
       )
@@ -361,7 +363,7 @@ export const adminOps = new Elysia({ name: "admin-ops" })
         async ({ authUser, params, body }) => {
           const u = await db.query.users.findFirst({ where: eq(users.id, params.id) });
           if (!u) throw notFound("User");
-          const targetIsAdmin = ADMIN_ROLES.includes(u.role);
+          const targetIsAdmin = ADMIN_PANEL_ROLES.includes(u.role);
           if ((targetIsAdmin || body.role) && authUser.role !== "SUPER_ADMIN")
             throw forbidden("Only a super admin can change admin accounts");
           if (u.id === authUser.id && (body.isActive === false || body.role))
@@ -384,7 +386,7 @@ export const adminOps = new Elysia({ name: "admin-ops" })
             isActive: t.Optional(t.Boolean()),
             name: t.Optional(t.String({ minLength: 2, maxLength: 160 })),
             phone: t.Optional(t.Nullable(t.String({ minLength: 10, maxLength: 20 }))),
-            role: t.Optional(lit(["SUPER_ADMIN", "ADMIN_STAFF"] as const)),
+            role: t.Optional(lit(["SUPER_ADMIN", "ADMIN_STAFF", "BLOG_EDITOR"] as const)),
           }),
         },
       )

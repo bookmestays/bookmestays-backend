@@ -39,7 +39,7 @@ export async function createUserWithTempPassword(
     name: string;
     email: string;
     phone?: string | null;
-    role: "PARTNER_OWNER" | "PARTNER_STAFF" | "ADMIN_STAFF";
+    role: "PARTNER_OWNER" | "PARTNER_STAFF" | "ADMIN_STAFF" | "BLOG_EDITOR";
     password?: string;
   },
 ) {
